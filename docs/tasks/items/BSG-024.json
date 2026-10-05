@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-024",
+    "tool": "bst-source-grep",
+    "title": "Reduce project load and cache-state resolution time",
+    "area": "performance",
+    "priority": "P1",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Every run on freedesktop-sdk sdk.bst (615 elements) spends 24-28 s loading the project and resolving source cache state before any search; that is 75% of a warm-index find (32 s) and the floor for every query.",
+    "proposal": "Profile the load phase (project load, load_selection, update_resolved_state, query_cache, get_files) on freedesktop-sdk; remove avoidable per-element work in the tool, and evaluate a versioned cache of the element-to-source-digest mapping keyed by every input that can change it (project files, options, junction state, cache contents). Never return a stale mapping.",
+    "acceptance": [
+      "A load-phase profile on freedesktop-sdk sdk.bst identifies where the time goes.",
+      "Any cached mapping is invalidated by edits to elements, includes, project options, junctions and source cache changes, with tests for each.",
+      "Load time on freedesktop-sdk sdk.bst drops measurably with identical results."
+    ],
+    "depends_on": [
+      "BSG-010",
+      "BSG-011"
+    ],
+    "evidence": [
+      "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274"
+    ]
+  }
+}

@@ -27,7 +27,8 @@
       "Reviewer fixture reproduced on main 775a143: content-unique-trees wall 19.97 s, mount 15.43 s, search 1.61 s, deferred cleanup 1.54 s.",
       "Direct buildbox-fuse probe (100 trees): mount ready 2.9 ms median, umount 2.0 ms, SIGTERM-driven unmount 0.85 ms. The fixed 50 ms readiness poll accounted for ~92% of the reported mount stage.",
       "Bounded-pool prototype (mount+rg+unmount per tree, 300 trees): 1 worker 3.48 s, 2 workers 1.82 s, 4 workers 0.99 s, 8 workers 0.81 s; follow-up recorded as BSG-021.",
-      "tests/test_integration.py::test_benchmark_harness_smoke runs the tiny scale in CI."
+      "tests/test_integration.py::test_benchmark_harness_smoke runs the tiny scale in CI.",
+      "freedesktop-sdk sdk.bst (615 elements, 468 trees, 23 GB cache) via .github/workflows/bench-fdsdk.yml: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274"
     ]
   }
 }

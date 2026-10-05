@@ -5,20 +5,24 @@
     "tool": "bst-source-grep",
     "title": "Reduce cold filename traversal and warm-index filtering work",
     "area": "performance",
-    "priority": "P2",
+    "priority": "P1",
     "status": "proposed",
     "effort": "M",
-    "problem": "Filename traversal stats every file and traverses all subdirectories; warm JSONL indexes still require a full scan.",
-    "proposal": "Profile stat/metadata work and compile reusable filter predicates. Evaluate safe directory pruning for narrow include prefixes; consider an alternate index only when scan cost is material. Never publish a query-filtered index as a complete tree index.",
+    "problem": "Filename traversal without a warm index materializes every visited subdirectory as a BuildStream CasBasedDirectory object (_IndexEntry.get_directory caches it) and keeps it alive through the tree record, then stats each listed path from the root again. On freedesktop-sdk sdk.bst (468 trees, 598,531 files) a find without a warm index peaks at 1.64 GiB RSS with 35-39 s of traversal; a warm JSONL index needs 118 MiB and 7 s.",
+    "proposal": "Walk Directory protos from the local CAS directly with an explicit stack, yielding regular files in the current order (sorted files, then sorted subdirectories) without retaining BuildStream objects or re-resolving paths; release each tree once traversed. Then profile warm-index filtering and evaluate safe directory pruning for narrow include prefixes. Never publish a query-filtered index as a complete tree index.",
     "acceptance": [
-      "Broad and narrow patterns preserve the same match set as the current implementation.",
+      "Broad and narrow patterns preserve the same match set and order as the current implementation.",
+      "Peak RSS for find without a warm index stays within a small constant of the warm-index run on freedesktop-sdk sdk.bst.",
       "Complete cached indexes remain valid across different later queries.",
-      "Report measured wall-time/RSS tradeoffs on fresh and warm indexes before changing format."
+      "Report measured wall-time/RSS on fresh, warm and no index before changing the index format."
     ],
     "depends_on": [
       "BSG-010",
       "BSG-016"
     ],
-    "evidence": []
+    "evidence": [
+      "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274",
+      "Dropping the tree's directory after traversal alone cut components/patch.bst peak RSS 318 -> 178 MiB locally; the rest is the largest single tree's cached objects."
+    ]
   }
 }

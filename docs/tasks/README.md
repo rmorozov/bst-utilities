@@ -58,16 +58,18 @@ performance claim. Reprioritize after benchmarks or user feedback.
    the fixed 50 ms readiness poll, not buildbox-fuse startup (~3 ms), dominated
    mounting. Scoped serial mounts with backoff polling and SIGTERM-driven
    unmounts cut that scenario from 20.0 s to 5.1 s with one live mount.
-2. **BSG-021: bounded pool, if many-tree searches matter.** A prototype with four
-   workers cut the remaining per-tree mount/search/unmount stage from 3.5 s to
-   1.0 s; it needs ordered streaming output and pooled cancellation cleanup.
-3. **BSG-011 and BSG-016: establish boundaries and glob contracts.** The private
-   BuildStream adapter and differential matcher tests reduce regression risk.
-   These can proceed alongside the benchmark/lifecycle work; preserve CLI and
-   result contracts while optimizing.
-4. Use the results to choose **BSG-013** (traversal/filter/index work) or **BSG-014**
-   (byte-bounded output). Avoid adopting parallel workers, SQLite or direct blob
-   content search merely because they sound faster.
+2. **Real workload (freedesktop-sdk `sdk.bst`, 615 elements, 468 trees, 4 CPUs).**
+   The fdsdk benchmark workflow measured three costs that the fixtures hid:
+   **BSG-013**, a find without a warm index peaks at 1.64 GiB RSS because BuildStream
+   directory objects are retained (118 MiB warm); **BSG-024**, 24-28 s of project
+   load and cache-state resolution precede every query; **BSG-021**, a full
+   content scan spends 282 s in one rg at a time plus 13 s of releases.
+3. **BSG-013, then BSG-021 and BSG-024.** Memory first (bounded, small change),
+   then the pool for content scans and load-phase profiling.
+4. **BSG-011 and BSG-016: establish boundaries and glob contracts.** The private
+   BuildStream adapter and differential matcher tests reduce regression risk;
+   BSG-024 depends on the adapter. Preserve CLI and result contracts while
+   optimizing. Choose **BSG-014** (byte-bounded output) when output volume matters.
 5. Deliver **BSG-015 / BSG-019** for diagnosis and recipes, then **BSG-017 / BSG-018**
    for early result limits and explicit cache management.
 

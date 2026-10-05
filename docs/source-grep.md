@@ -130,5 +130,10 @@ On 300 unique three-file trees (BuildStream 2.8.0, 4 CPUs), scoped mounts with
 backoff polling took the content search from 20.0 s (15.4 s of it mounting) to
 5.1 s, with one live mount instead of 300.
 
+On freedesktop-sdk `sdk.bst` (615 elements, 468 trees, 4-CPU GitHub runner) the
+medians were: find with a warm index 32 s (24 s of it project load), without one
+63-68 s at 1.64 GiB peak RSS, and a no-match content scan 326 s (282 s search,
+13 s releases). See BSG-013, BSG-021 and BSG-024 for the follow-ups.
+
 See [the task registry](tasks/README.md) for prioritized next steps, including
 benchmarking, module boundaries, bounded mounts and improved diagnostics.
