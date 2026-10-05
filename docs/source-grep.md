@@ -86,7 +86,8 @@ emits trees in their original order, so output is identical to `--jobs 1`. A tre
 is unmounted as soon as its rg finishes (with `--origin`, after its output is
 emitted, because `.gitreview` lookups read the mount). A run therefore holds at
 most `--jobs` owned mounts (one more with `--origin`), and spool space is bounded by the output of about
-`--jobs` + 1 trees. `--jobs 1` keeps the serial, streaming path. Mount readiness is polled
+`--jobs` + 1 trees. `--jobs 1`, or a search with a single tree, uses the serial
+streaming path, so output starts as soon as rg produces it and needs no spool. Mount readiness is polled
 from 1 ms with exponential backoff up to 50 ms, so a quick buildbox-fuse start is
 not rounded up to a fixed poll interval.
 `--keep-mounts` retains this run's mounts (so every searched tree stays mounted
@@ -100,13 +101,15 @@ and supports `BUILDBOX_FUSE` as an environment override. Cleanup attempts every 
 or directory removal fails. Search processes spool
 stderr to a temporary file while stdout is streamed; diagnostics are bounded
 when reported. Interruptions and closed pipes stop queued trees, terminate/reap
-every running rg and wait for workers before mount cleanup.
+every running rg (SIGKILL after a 2 s grace if SIGTERM is ignored) and wait for
+workers before mount cleanup.
 
 Filename searches without a warm path index read the CAS Directory records
 directly (sorted files, then sorted subdirectories, as BuildStream lists them),
 so memory does not grow with the number of trees. While loading, each unique
 source tree's cache completeness check (casd `FetchTree`) runs once, concurrently,
-instead of serially per element.
+instead of serially per element. The checks are gRPC futures awaited on the
+main thread; an interrupt cancels every one still in flight.
 
 ## Validation and next steps
 

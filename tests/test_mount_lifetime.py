@@ -136,40 +136,149 @@ def test_rg_runner_refuses_new_processes_after_abort(tmp_path):
             runner.run([sys.executable, "-c", "pass"], str(tmp_path), out)
 
 
-def test_cache_state_checked_once_per_tree_concurrently():
+class FakeRpc:
+    """A FetchTree future that blocks until it is resolved or cancelled."""
+
+    def __init__(self, outcome):
+        import threading
+
+        self.outcome = outcome
+        self.cancelled = False
+        self.done = threading.Event()
+        if outcome != "block":
+            self.done.set()
+
+    def result(self):
+        # grpc futures wait in short slices, so a signal can interrupt them.
+        while not self.done.wait(0.05):
+            pass
+        if self.cancelled:
+            raise RuntimeError("cancelled")
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+    def cancel(self):
+        self.cancelled = True
+        self.done.set()
+
+
+def cache_check_fixture(outcomes):
     from types import SimpleNamespace
 
-    calls = []
+    pytest.importorskip("buildstream")
+    import grpc
+
+    class NotFound(grpc.RpcError):
+        def code(self):
+            return grpc.StatusCode.NOT_FOUND
+
+    class Unavailable(grpc.RpcError):
+        def code(self):
+            return grpc.StatusCode.UNAVAILABLE
+
+    errors = {"missing": NotFound(), "boom": Unavailable()}
+    rpcs, calls = {}, []
+
+    def future(request):
+        h = request.root_digest.hash
+        rpcs[h] = FakeRpc(errors.get(outcomes[h], outcomes[h]))
+        return rpcs[h]
 
     class Cas:
+        _remote_cache = False
+        _casd = SimpleNamespace(
+            get_local_cas=lambda: SimpleNamespace(FetchTree=SimpleNamespace(future=future))
+        )
+
         def contains_directory(self, digest):
             calls.append(digest.hash)
-            if digest.hash == "boom":
-                raise RuntimeError("casd unavailable")
-            return digest.hash != "missing"
+            return "original"
 
-    def element(hash_value):
-        files = SimpleNamespace(hash=hash_value, size_bytes=1)
+    from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2
+
+    def element(h):
+        files = remote_execution_pb2.Digest(hash=h, size_bytes=1)
         cache = SimpleNamespace(load_proto=lambda accessor: SimpleNamespace(files=files))
         accessor = SimpleNamespace(
             get_files=lambda: None,
             update_resolved_state=lambda: None,
             is_resolved=lambda: True,
             _elementsourcescache=cache,
+            sources=[object()],
         )
         return SimpleNamespace(_sources=accessor), files
 
-    elements, digests = zip(*(element(h) for h in ["a", "a", "missing", "boom", "b"]))
-    for e in elements:
-        e._sources.sources = [object()]
     cas = Cas()
-    ctx = SimpleNamespace(get_cascache=lambda: cas)
-    assert sg.prefetch_source_cache_state(elements, ctx, 4) == 4
-    assert sorted(calls) == ["a", "b", "boom", "missing"]
-    calls.clear()
+    return cas, SimpleNamespace(get_cascache=lambda: cas), element, rpcs, calls
+
+
+def test_cache_state_checked_once_per_tree():
+    outcomes = {"a": None, "missing": "missing", "boom": "boom", "b": None}
+    cas, ctx, element, rpcs, calls = cache_check_fixture(outcomes)
+    elements, digests = zip(*(element(h) for h in ["a", "a", "missing", "boom", "b"]))
+    assert sg.prefetch_source_cache_state(elements, ctx, 2) == 4
+    assert sorted(rpcs) == ["a", "b", "boom", "missing"]
     assert cas.contains_directory(digests[0]) is True
     assert cas.contains_directory(digests[2]) is False
     assert calls == []
-    with pytest.raises(RuntimeError):
-        cas.contains_directory(digests[3])  # failures are re-raised by the original call
+    # Indefinite answers fall back to BuildStream's own call and error handling.
+    assert cas.contains_directory(digests[3]) == "original"
     assert calls == ["boom"]
+
+
+def test_cache_checks_cancel_in_flight_rpcs_on_interrupt():
+    import os
+    import signal
+    import threading
+
+    outcomes = {h: "block" for h in "abcd"}
+    cas, ctx, element, rpcs, _ = cache_check_fixture(outcomes)
+    elements = [element(h)[0] for h in "abcd"]
+    timer = threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGINT))
+    timer.start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            sg.prefetch_source_cache_state(elements, ctx, 3)
+    finally:
+        timer.cancel()
+    # Only `workers` RPCs were started and every one was cancelled.
+    assert len(rpcs) == 3
+    assert all(rpc.cancelled for rpc in rpcs.values())
+
+
+def test_rg_abort_kills_children_that_ignore_sigterm(tmp_path):
+    import threading
+    import time
+
+    child = (
+        "import signal, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
+        "time.sleep(60)\n"
+    )
+    runner = sg.RgRunner()
+    out = open(tmp_path / "out", "w+b")
+    errors = []
+
+    def work():
+        try:
+            runner.run([sys.executable, "-c", child], str(tmp_path), out)
+        except sg.SearchError as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    deadline = time.monotonic() + 10
+    while (not runner.active or b"ready" not in (tmp_path / "out").read_bytes()) and (
+        time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+    (proc,) = list(runner.active)
+    start = time.monotonic()
+    runner.abort(grace=0.2)
+    worker.join(timeout=5)
+    out.close()
+    assert not worker.is_alive()
+    assert time.monotonic() - start < 5
+    assert proc.returncode is not None and errors

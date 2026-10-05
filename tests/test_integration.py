@@ -5,9 +5,11 @@ import json
 import os
 import re
 import shutil
+import select
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -302,6 +304,52 @@ def test_fuse_mounts_bounded_by_jobs_with_ordered_output(review_project):
     # Pooled output is byte-identical to serial output, in the same order.
     assert outputs[3, False] == outputs[1, False]
     assert outputs[3, True] == outputs[1, True]
+
+
+@pytest.mark.integration
+def test_single_tree_streams_before_rg_finishes(review_project):
+    p = review_project
+    if not os.path.exists("/dev/fuse"):
+        if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+            pytest.fail("FUSE integration is required but /dev/fuse is missing")
+        pytest.skip("/dev/fuse is unavailable")
+    # A stand-in rg that emits enough matches to flush, then keeps running.
+    fake_bin = p.tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    rg = fake_bin / "rg"
+    rg.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, time\n"
+        "for n in range(20000):\n"
+        "    event = {'type': 'match', 'data': {'path': {'text': './file.txt'},\n"
+        "             'lines': {'text': 'line\\n'}, 'line_number': n + 1}}\n"
+        "    sys.stdout.write(json.dumps(event) + '\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(120)\n"
+    )
+    rg.chmod(0o755)
+    p.fetch("multi.bst")
+    mounts = p.tmp_path / "mounts"
+    env = dict(p.env, PATH=f"{fake_bin}{os.pathsep}{p.env['PATH']}")
+    start = time.monotonic()
+    proc = subprocess.Popen(
+        p.base + ["multi.bst", "line", "--jobs", "4", "--mount-dir", str(mounts)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        ready, _, _ = select.select([proc.stdout], [], [], 60)
+        assert ready, "no output while rg was still running"
+        assert proc.stdout.readline().startswith(b"multi.bst:")
+        proc.stdout.close()
+        assert proc.wait(timeout=60) == 141
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert time.monotonic() - start < 100, "search waited for rg to finish"
+    assert not list(mounts.iterdir())
 
 
 @pytest.mark.integration

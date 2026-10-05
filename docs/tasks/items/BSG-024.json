@@ -21,7 +21,8 @@
     "evidence": [
       "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274",
       "Branch claude/project-thread-ytzju7, PR #6: prefetch_source_cache_state; tests/test_mount_lifetime.py::test_cache_state_checked_once_per_tree_concurrently.",
-      "freedesktop-sdk sdk.bst (https://github.com/rmorozov/bst-utilities/actions/runs/37349192598): load 24-28 s -> 18.3-20.3 s. Locally with a warm page cache 8 workers cut the cache checks 1.43 -> 0.55 s. --stats now splits load into project load and cache check time to locate the remainder."
+      "freedesktop-sdk sdk.bst (https://github.com/rmorozov/bst-utilities/actions/runs/37349192598): load 24-28 s -> 18.3-20.3 s. Locally with a warm page cache 8 workers cut the cache checks 1.43 -> 0.55 s. --stats now splits load into project load and cache check time to locate the remainder.",
+      "Review follow-up: cache checks are FetchTree futures awaited on the main thread and cancelled on interrupt (test_cache_checks_cancel_in_flight_rpcs_on_interrupt); remote-cache configurations keep BuildStream's own path."
     ]
   }
 }

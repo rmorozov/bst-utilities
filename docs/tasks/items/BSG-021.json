@@ -23,7 +23,8 @@
       "Prototype measurement recorded in BSG-010 evidence.",
       "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274",
       "Branch claude/project-thread-ytzju7, PR #6: --jobs (default min(4, CPUs)) with ordered spooled output; 300-tree fixture 4.32 -> 2.09 s; components/patch.bst warm full scan 17.4 -> 11.7 s on 4 CPUs; tests/test_integration.py::test_fuse_mounts_bounded_by_jobs_with_ordered_output and test_mount_lifetime pool tests.",
-      "freedesktop-sdk sdk.bst (https://github.com/rmorozov/bst-utilities/actions/runs/37349192598), same run: no-match full scan 336.9 s with --jobs 1 vs 220.6 s with 4 jobs (peak mounts 4); -l 302.9 -> 212.5 s; -n fan-out 89.7 -> 75.2 s."
+      "freedesktop-sdk sdk.bst (https://github.com/rmorozov/bst-utilities/actions/runs/37349192598), same run: no-match full scan 336.9 s with --jobs 1 vs 220.6 s with 4 jobs (peak mounts 4); -l 302.9 -> 212.5 s; -n fan-out 89.7 -> 75.2 s.",
+      "Review follow-up: a single tree always streams (test_single_tree_streams_before_rg_finishes fails on the pooled-only code); abort kills SIGTERM-ignoring children after a bounded grace (test_rg_abort_kills_children_that_ignore_sigterm)."
     ]
   }
 }

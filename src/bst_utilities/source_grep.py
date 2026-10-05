@@ -57,6 +57,8 @@ BUILDBOX_FUSE_NAMES = (
 )
 
 # Readiness polling backs off from 1 ms to 50 ms per buildbox-fuse mount.
+# Seconds aborted rg processes get after SIGTERM before SIGKILL.
+ABORT_GRACE_SECONDS = 2.0
 # Default concurrent trees for content searches (BSG-021).
 DEFAULT_JOBS = 4
 # Concurrent casd FetchTree checks while loading source cache state.
@@ -569,14 +571,23 @@ def prefetch_source_cache_state(elements, ctx, workers):
 
     ElementSources.query_cache() verifies each tree with a casd FetchTree call
     that stats every file blob; done serially per element it dominates load on
-    large projects. Check each unique tree once, concurrently, with the same
-    CASCache.contains_directory() call, and serve query_cache() from the
-    results. Anything unexpected leaves BuildStream's own path in place.
+    large projects. Issue the same local-only FetchTree once per unique tree,
+    with up to `workers` RPCs in flight, and serve CASCache.contains_directory()
+    from the results. RPC futures are awaited on this thread and all of them are
+    cancelled if the wait is interrupted, so Ctrl-C never waits on casd. Only
+    the definite answers (OK, NOT_FOUND) are recorded; anything else, or a
+    remote cache, leaves BuildStream's own call in place.
     Returns the number of trees checked.
     """
     try:
+        import grpc
+        from buildstream._protos.build.buildgrid import local_cas_pb2
+
         cas = ctx.get_cascache()
         original = cas.contains_directory
+        if getattr(cas, "_remote_cache", True):
+            return 0
+        local_cas = cas._casd.get_local_cas()
     except Exception:
         return 0
 
@@ -595,16 +606,35 @@ def prefetch_source_cache_state(elements, ctx, workers):
         if proto is not None:
             digests[(proto.files.hash, proto.files.size_bytes)] = proto.files
 
-    def check(digest):
-        try:
-            return original(digest)
-        except Exception:
-            return None  # let BuildStream repeat the call and report the error
-
     if len(digests) < 2:
         return 0
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = dict(zip(digests, pool.map(check, digests.values())))
+
+    def start(digest):
+        request = local_cas_pb2.FetchTreeRequest()
+        request.root_digest.CopyFrom(digest)
+        request.fetch_file_blobs = True  # same as BuildStream without a remote cache
+        return local_cas.FetchTree.future(request)
+
+    results = {}
+    queue = deque(digests.items())
+    in_flight = deque()
+    try:
+        while queue or in_flight:
+            while queue and len(in_flight) < workers:
+                key, digest = queue.popleft()
+                in_flight.append((key, start(digest)))
+            # Leave the awaited RPC in in_flight so an interrupt cancels it too.
+            key, future = in_flight[0]
+            try:
+                future.result()
+                results[key] = True
+            except grpc.RpcError as exc:
+                if exc.code() == grpc.StatusCode.NOT_FOUND:
+                    results[key] = False
+            in_flight.popleft()
+    finally:
+        for _, future in in_flight:
+            future.cancel()
 
     def contains_directory(digest, *args, **kwargs):
         known = results.get((digest.hash, digest.size_bytes))
@@ -613,7 +643,7 @@ def prefetch_source_cache_state(elements, ctx, workers):
         return known
 
     cas.contains_directory = contains_directory
-    return len(results)
+    return len(digests)
 
 
 def get_source_objects(element, accessor):
@@ -1214,16 +1244,33 @@ class RgRunner:
                 errors.seek(0)
                 raise SearchError("rg failed: " + errors.read(65536).decode("utf-8", "replace"))
 
-    def abort(self):
+    def abort(self, grace=ABORT_GRACE_SECONDS):
+        """Signal every running rg, then kill survivors after a bounded grace.
+
+        Workers reap their own child (they are blocked in wait()); this only
+        needs each child to exit so that their waits, and the pool, return.
+        """
         with self.lock:
             self.aborted = True
             procs = list(self.active)
         for proc in procs:
+            signal_process(proc, "terminate")
+        deadline = time.monotonic() + grace
+        for proc in procs:
+            # returncode is set by the reaping worker; poll() may not get the
+            # wait lock while that worker is blocked in waitpid.
+            while proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+        for proc in procs:
             if proc.poll() is None:
-                try:
-                    proc.terminate()
-                except ProcessLookupError:
-                    pass
+                signal_process(proc, "kill")
+
+
+def signal_process(proc, method):
+    try:
+        getattr(proc, method)()
+    except (ProcessLookupError, OSError):
+        pass
 
 
 def iter_ordered(items, jobs, work, on_abort=None):
@@ -3014,11 +3061,14 @@ def _main() -> int:
                     return time.monotonic() - phase_start
 
                 tree_list = list(trees.values())
+                # A pool only helps with several trees; a single tree keeps the
+                # streaming path so output starts at once and needs no spool.
+                jobs = max(1, min(args.jobs, len(tree_list)))
                 # Phase times are summed across concurrent trees, so with more
                 # than one job they can exceed the wall-clock total.
-                stats["search_jobs"] = args.jobs
+                stats["search_jobs"] = jobs
 
-                if args.jobs == 1:
+                if jobs == 1:
                     # Each tree is mounted, searched and released before the next
                     # one, streaming rg output as it arrives.
                     for tree in tree_list:
@@ -3087,7 +3137,7 @@ def _main() -> int:
 
                     try:
                         with closing(
-                            iter_ordered(tree_list, args.jobs, search_tree, runner.abort)
+                            iter_ordered(tree_list, jobs, search_tree, runner.abort)
                         ) as done:
                             for tree, result in done:
                                 stats["mount_seconds"] += result["mount_seconds"]
