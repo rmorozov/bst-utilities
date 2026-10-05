@@ -255,32 +255,53 @@ def test_fuse_slash_globs_statistics_and_closed_pipe(review_project):
 
 
 @pytest.mark.integration
-def test_fuse_mounts_one_tree_at_a_time(review_project):
+def test_fuse_mounts_bounded_by_jobs_with_ordered_output(review_project):
     p = review_project
     if not os.path.exists("/dev/fuse"):
         if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
             pytest.fail("FUSE integration is required but /dev/fuse is missing")
         pytest.skip("/dev/fuse is unavailable")
     elements = p.project / "elements"
-    for name in ["adir", "bdir"]:
+    names = [f"t{i}" for i in range(6)]
+    for name in names:
+        (p.project / name).mkdir()
+        (p.project / name / "file.txt").write_text(f"{name} dir\nother\n{name} dir again\n")
         (elements / f"{name}.bst").write_text(
             f"kind: import\nsources:\n- kind: local\n  path: {name}\n"
         )
-    (elements / "trees.bst").write_text("kind: stack\ndepends:\n- adir.bst\n- bdir.bst\n")
-    p.fetch("adir.bst")
-    p.fetch("bdir.bst")
+        p.fetch(f"{name}.bst")
+    deps = "".join(f"- {name}.bst\n" for name in names)
+    (elements / "trees.bst").write_text(f"kind: stack\ndepends:\n{deps}")
     mounts = p.tmp_path / "mounts"
-    result = p.search("trees.bst", "-n", "dir$", "--json", "--stats", "--mount-dir", str(mounts))
-    assert result.returncode == 0, result.stderr
-    records = [json.loads(line) for line in result.stdout.splitlines()]
-    assert sorted((r["element"], r["path"], r["line"]) for r in records) == [
-        ("adir.bst", "file.txt", 1),
-        ("bdir.bst", "file.txt", 1),
+    outputs = {}
+    for jobs in (1, 3):
+        for extra in ([], ["--origin"]):
+            result = p.search(
+                "trees.bst",
+                "-n",
+                "dir",
+                "--json",
+                "--stats",
+                "--mount-dir",
+                str(mounts),
+                "--jobs",
+                str(jobs),
+                *extra,
+            )
+            assert result.returncode == 0, result.stderr
+            outputs[jobs, bool(extra)] = result.stdout
+            limit = jobs + 1 if extra and jobs > 1 else jobs
+            assert re.search(rf"peak mounts:\s+[1-{limit}]\b", result.stderr), result.stderr
+            assert re.search(r"fuse processes:\s+6\b", result.stderr), result.stderr
+            assert re.search(r"rg processes:\s+6\b", result.stderr), result.stderr
+            assert not list(mounts.iterdir())
+    records = [json.loads(line) for line in outputs[1, False].splitlines()]
+    assert [(r["element"], r["line"]) for r in records] == [
+        (f"{name}.bst", line) for name in sorted(names) for line in (1, 3)
     ]
-    assert re.search(r"peak mounts:\s+1\b", result.stderr), result.stderr
-    assert re.search(r"fuse processes:\s+2\b", result.stderr), result.stderr
-    assert re.search(r"rg processes:\s+2\b", result.stderr), result.stderr
-    assert not list(mounts.iterdir())
+    # Pooled output is byte-identical to serial output, in the same order.
+    assert outputs[3, False] == outputs[1, False]
+    assert outputs[3, True] == outputs[1, True]
 
 
 @pytest.mark.integration
@@ -311,7 +332,9 @@ def test_benchmark_harness_smoke(tmp_path):
     assert by_name["find-warm-index"]["runs"][0]["path cache hits"] == 1
     if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
         trees = by_name["content-unique-trees"]["runs"][0]
-        assert trees["peak mounts"] == 1 and trees["rg processes"] == 5
+        assert 1 <= trees["peak mounts"] <= trees["search jobs"] and trees["rg processes"] == 5
+        serial = by_name["content-unique-trees-serial"]["runs"][0]
+        assert serial["peak mounts"] == 1 and serial["search jobs"] == 1
         assert by_name["content-duplicate-trees"]["runs"][0]["fuse processes"] == 1
     assert "| find-warm-index |" in result.stdout
 

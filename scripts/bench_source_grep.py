@@ -41,6 +41,7 @@ SCENARIOS = [
     ("content-small-files", "small-files.bst", ["needle"], True, "none"),
     ("content-large-files", "large-files.bst", ["needle"], True, "none"),
     ("content-unique-trees", "unique-trees.bst", ["needle"], True, "none"),
+    ("content-unique-trees-serial", "unique-trees.bst", ["needle", "--jobs", "1"], True, "none"),
     ("content-duplicate-trees", "dup-trees.bst", ["needle"], True, "none"),
     ("output-fanout", "small-files.bst", ["-n", "line"], True, "none"),
 ]
@@ -53,6 +54,13 @@ EXTERNAL_SCENARIOS = [
     ("find-no-index", None, ["--find", "*.c"], False, "none"),
     ("find-rare-name", None, ["--find", "meson.build"], False, "warm"),
     ("content-no-match", None, ["-F", "bst-source-grep-bench-absent-string"], True, "none"),
+    (
+        "content-no-match-serial",
+        None,
+        ["-F", "bst-source-grep-bench-absent-string", "--jobs", "1"],
+        True,
+        "none",
+    ),
     ("content-files-with-matches", None, ["-l", "-F", "Copyright"], True, "none"),
     ("output-fanout", None, ["-n", "-F", "#include", "--glob", "*.c"], True, "none"),
 ]
@@ -198,7 +206,10 @@ def run_once(base_cmd, args, cwd) -> dict:
         # casd start/stop and anything else inside the tool's total.
         record["startup"] = wall - record["total time"]
         phases = ("load time", "mount time", "search time", "cleanup time")
-        record["other"] = record["total time"] - sum(record.get(k, 0.0) for k in phases)
+        # With several search jobs, phase times overlap and are summed, so the
+        # remainder is not meaningful.
+        if record.get("search jobs", 1) <= 1 or record.get("mounted trees", 0) == 0:
+            record["other"] = record["total time"] - sum(record.get(k, 0.0) for k in phases)
     if proc.returncode not in (0, 1):
         record["stderr"] = stderr[-2000:]
     return record
@@ -356,6 +367,7 @@ def print_report(report) -> None:
         ("unique trees", "trees"),
         ("results", "results"),
         ("peak mounts", "peak mounts"),
+        ("search jobs", "jobs"),
         ("rg processes", "rg procs"),
     ]
     header = ["scenario", *(label for _, label in METRICS), *(label for _, label in counts)]

@@ -85,10 +85,11 @@ def test_sources_initialized_before_cache_query():
 
 def test_cache_concurrent_writers_and_newlines(tmp_path, monkeypatch):
     paths = ["a.txt", "sub/x\ny.txt", "back\\slash.txt"]
-    monkeypatch.setattr(sg, "iter_relative_paths", lambda directory: iter(paths))
     cache = tmp_path / "index.jsonl"
     with ThreadPoolExecutor(max_workers=4) as pool:
-        result = list(pool.map(lambda _: list(sg.iter_directory_and_cache(None, cache)), range(8)))
+        result = list(
+            pool.map(lambda _: list(sg.iter_directory_and_cache(iter(paths), cache)), range(8))
+        )
     assert result == [paths] * 8
     assert list(sg.iter_path_cache_file(cache)) == paths
     assert not list(tmp_path.glob("*.tmp"))
@@ -98,13 +99,12 @@ def test_failed_cache_write_preserves_previous_index(tmp_path, monkeypatch):
     cache = tmp_path / "index.jsonl"
     cache.write_text('"previous.txt"\n')
 
-    def fail(directory):
+    def fail():
         yield "partial.txt"
         raise OSError("missing CAS blob")
 
-    monkeypatch.setattr(sg, "iter_relative_paths", fail)
     with pytest.raises(OSError):
-        list(sg.iter_directory_and_cache(None, cache))
+        list(sg.iter_directory_and_cache(fail(), cache))
     assert list(sg.iter_path_cache_file(cache)) == ["previous.txt"]
     assert not list(tmp_path.glob("*.tmp"))
 
@@ -144,7 +144,10 @@ class BlobStore:
         self.tmpdir = str(root)
 
     def objpath(self, digest):
-        return str(self.root / digest.hash)
+        # Same layout as a BuildStream CAS directory, so iter_cas_files can read it.
+        path = self.root / "objects" / digest.hash[:2] / digest.hash[2:]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def add_object(self, *, buffer=None, path=None):
         from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2
@@ -282,3 +285,21 @@ def test_main_exit_statuses(monkeypatch, tmp_path, capsys, status, paths, expect
         assert json.loads(output.out)["path"] == "hello.txt"
     else:
         assert output.out == ""
+
+
+def test_direct_cas_walk_matches_buildstream_listing(tmp_path):
+    pytest.importorskip("buildstream")
+    from buildstream.storage._casbaseddirectory import CasBasedDirectory
+
+    cas = BlobStore(tmp_path)
+    directory = CasBasedDirectory(cas)
+    for rel in ["z.c", "a.c", "b/y.c", "b/c/x.c", "b/a.h", "B/upper.c", "e/empty/.keep"]:
+        parent, _, name = rel.rpartition("/")
+        target = directory.open_directory(parent, create=True) if parent else directory
+        with target.open_file(name, mode="w") as f:
+            f.write(rel)
+    directory.open_directory("only-dirs/nested", create=True)
+    digest = sg.get_cas_directory_digest(directory)
+    expected = list(sg.iter_relative_paths(CasBasedDirectory(cas, digest=digest)))
+    assert list(sg.iter_cas_files(str(tmp_path), digest)) == expected
+    assert expected[:2] == ["a.c", "z.c"]

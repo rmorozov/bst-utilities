@@ -36,7 +36,8 @@ bst-source-grep TARGET --find GLOB [options]
 | `--gitreview-nearest` | Use nearest ancestor `.gitreview`; otherwise use tree root. Works with both backends. |
 | `--strip-junctions` / `--unique-recipes` | Remove junction prefixes and deduplicate identical recipe/path records. Can collapse distinct junction instances. |
 | `--fetch-subprojects` | Explicitly allow fetching missing junction sources required to load the project. Default is refuse with a diagnostic. |
-| `--stats`, `--traceback` | Diagnostics to stderr. Stats include per-phase load, mount, search and cleanup time, peak mounts, and buildbox-fuse/rg process counts. |
+| `-j / --jobs N` | Content-search trees mounted and searched concurrently; default min(4, CPUs). `1` streams each tree's output as rg produces it. |
+| `--stats`, `--traceback` | Diagnostics to stderr. Stats include per-phase load, mount, search and cleanup time, peak mounts, search jobs, and buildbox-fuse/rg process counts. With more than one job, phase times are summed across trees and can exceed the total. |
 
 Filename globs support `*`, `?`, character classes and `**`. A pattern with no
 slash matches the basename at any depth; slash patterns match the entire
@@ -78,9 +79,14 @@ the attached prototype are ignored and can be removed manually.
 
 FUSE mounts default to `~/.cache/bst-source-grep/mounts`. Each run creates its own
 mount directory, so another search cannot unmount it while it is being read.
-Unique source trees are processed one at a time: mount, search with one rg, then
-unmount, reap the buildbox-fuse process and remove mount/log paths before the next
-tree. A run therefore holds at most one owned mount. Mount readiness is polled
+Each unique source tree is mounted, searched with one rg, then unmounted: the
+buildbox-fuse process is reaped and mount/log paths removed. Up to `--jobs` trees
+do this concurrently; each rg writes to a temporary spool file and the main thread
+emits trees in their original order, so output is identical to `--jobs 1`. A tree
+is unmounted as soon as its rg finishes (with `--origin`, after its output is
+emitted, because `.gitreview` lookups read the mount). A run therefore holds at
+most `--jobs` owned mounts (one more with `--origin`), and spool space is bounded by the output of about
+`--jobs` + 1 trees. `--jobs 1` keeps the serial, streaming path. Mount readiness is polled
 from 1 ms with exponential backoff up to 50 ms, so a quick buildbox-fuse start is
 not rounded up to a fixed poll interval.
 `--keep-mounts` retains this run's mounts (so every searched tree stays mounted
@@ -93,7 +99,14 @@ explicit backend configuration. The tool discovers bundled FUSE executables
 and supports `BUILDBOX_FUSE` as an environment override. Cleanup attempts every owned mount and reaps its process even when an unmount
 or directory removal fails. Search processes spool
 stderr to a temporary file while stdout is streamed; diagnostics are bounded
-when reported. Interruptions terminate/reap rg before mount cleanup.
+when reported. Interruptions and closed pipes stop queued trees, terminate/reap
+every running rg and wait for workers before mount cleanup.
+
+Filename searches without a warm path index read the CAS Directory records
+directly (sorted files, then sorted subdirectories, as BuildStream lists them),
+so memory does not grow with the number of trees. While loading, each unique
+source tree's cache completeness check (casd `FetchTree`) runs once, concurrently,
+instead of serially per element.
 
 ## Validation and next steps
 

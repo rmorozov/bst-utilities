@@ -6,7 +6,7 @@
     "title": "Overlap per-tree mount, search and unmount with a small bounded pool",
     "area": "performance",
     "priority": "P1",
-    "status": "proposed",
+    "status": "in_progress",
     "effort": "M",
     "problem": "After BSG-012 the many-tree content search is serial: ~4.5 ms mount, ~5 ms rg and ~2 ms release per tree (300 trees: 3.5 s of a 5.1 s wall). A prototype pool of 4 workers cut that stage to 0.99 s on 4 CPUs. On freedesktop-sdk sdk.bst (468 trees, 4 CPUs) a no-match content scan spends 282 s in one rg at a time; releases cost 13 s (28 ms per tree after a full read, versus 8 ms to mount).",
     "proposal": "Run mount+rg (spooling rg output to a temporary file) for up to N trees concurrently, emit completed trees in input order from the main thread, and release each tree after emission. Default N to min(4, CPUs); keep N=1 equivalent to current behaviour. Release trees off the critical path so unmount overlaps the next search.",
@@ -21,7 +21,8 @@
     ],
     "evidence": [
       "Prototype measurement recorded in BSG-010 evidence.",
-      "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274"
+      "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274",
+      "Branch claude/project-thread-ytzju7, PR #6: --jobs (default min(4, CPUs)) with ordered spooled output; 300-tree fixture 4.32 -> 2.09 s; components/patch.bst warm full scan 17.4 -> 11.7 s on 4 CPUs; tests/test_integration.py::test_fuse_mounts_bounded_by_jobs_with_ordered_output and test_mount_lifetime pool tests."
     ]
   }
 }
