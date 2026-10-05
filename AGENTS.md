@@ -55,7 +55,7 @@ bst-source-grep --help
 - Stream large search output. Reap child processes on failure and interruption;
   avoid deadlocks between stdout and stderr. Respect mount ownership.
 - Preserve exit statuses: matches 0, no matches 1, errors/partial searches 2,
-  interruption 130. Diagnostics go to stderr; JSON Lines stays parseable.
+  interruption 130, closed output pipe 141. Diagnostics go to stderr; JSON Lines stays parseable.
 - Cache writes must be atomic, safe under concurrent writers, and versioned when
   the format changes. Never publish a partial index.
 - Never add credentials, source-cache contents or private source origins to git.

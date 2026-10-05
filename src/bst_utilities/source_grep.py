@@ -19,6 +19,7 @@ Exit codes:
     1   no matches found
     2   error
     130 interrupted
+    141 output pipe closed by reader
 """
 
 from __future__ import annotations
@@ -67,6 +68,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--config", help="BuildStream user configuration file")
+    parser.add_argument(
+        "-C", "--directory", default=os.getcwd(), help="BuildStream project directory"
+    )
+    parser.add_argument(
+        "-o",
+        "--option",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("KEY", "VALUE"),
+        help="project option; repeatable, last value wins",
+    )
 
     parser.add_argument(
         "target",
@@ -475,6 +488,12 @@ def load_source_directory(element):
     if callable(update):
         try:
             update()
+            if not accessor.is_resolved():
+                return (
+                    None,
+                    "unresolved",
+                    "sources have no ref; configure refs or run bst source track",
+                )
         except Exception as exc:
             return None, "uncached", str(exc)
 
@@ -1011,17 +1030,21 @@ def make_path_filter(args):
     return accepted
 
 
+class SearchError(RuntimeError):
+    """A failed ripgrep invocation or invalid output."""
+
+
 @contextmanager
-def rg_process(cmd):
+def rg_process(cmd, *, cwd=None):
     """Stream stdout, spool stderr and always reap the child before unmounting."""
     with tempfile.TemporaryFile(mode="w+b") as errors:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
+        proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=errors)
         try:
             yield proc
             proc.wait()
             if proc.returncode not in (0, 1):
                 errors.seek(0)
-                raise RuntimeError("rg failed: " + errors.read(65536).decode("utf-8", "replace"))
+                raise SearchError("rg failed: " + errors.read(65536).decode("utf-8", "replace"))
         finally:
             if proc.stdout is not None:
                 proc.stdout.close()
@@ -1034,8 +1057,8 @@ def rg_process(cmd):
                     proc.wait()
 
 
-def iter_rg_output(cmd, *, null=False):
-    with rg_process(cmd) as proc:
+def iter_rg_output(cmd, *, null=False, cwd=None):
+    with rg_process(cmd, cwd=cwd) as proc:
         if not null:
             for line in proc.stdout:
                 yield line.decode("utf-8", "replace")
@@ -1047,7 +1070,7 @@ def iter_rg_output(cmd, *, null=False):
                 for record in records:
                     yield os.fsdecode(record)
             if pending:
-                raise RuntimeError("rg returned an unterminated filename")
+                raise SearchError("rg returned an unterminated filename")
 
 
 def rg_json_text(value):
@@ -1056,6 +1079,83 @@ def rg_json_text(value):
     if "bytes" in value:
         return base64.b64decode(value["bytes"]).decode("utf-8", "surrogateescape")
     raise ValueError("rg JSON is missing text/bytes")
+
+
+def iter_mounted_matches(args, mountpoint):
+    """Run rg from the tree root so slash globs apply to source-relative paths."""
+    files = args.find is not None or args.files_with_matches
+    if args.find is not None:
+        cmd = ["rg", "--files", "--null", "--hidden", "--no-ignore", "."]
+        matcher = make_path_filter(args)
+    else:
+        cmd = ["rg", "--hidden", "--no-ignore", "--glob", "!**/.git/**"]
+        cmd.extend(["--files-with-matches", "--null"] if files else ["--json"])
+        for pattern in args.glob:
+            cmd.extend(["--glob", pattern])
+        for pattern in args.exclude:
+            cmd.extend(["--glob", pattern if pattern.startswith("!") else f"!{pattern}"])
+        if args.ignore_case:
+            cmd.append("--ignore-case")
+        if args.fixed_string:
+            cmd.append("--fixed-strings")
+        if args.binary_files == "text":
+            cmd.append("--text")
+        cmd.extend(["--", args.pattern, "."])
+    with closing(iter_rg_output(cmd, null=files, cwd=mountpoint)) as output:
+        for line in output:
+            if files:
+                path = line.removeprefix("./")
+                if path and (args.find is None or matcher(path)):
+                    yield "file", path, None, None
+            else:
+                try:
+                    event = json.loads(line)
+                    if event.get("type") != "match":
+                        continue
+                    data = event["data"]
+                    path = rg_json_text(data["path"]).removeprefix("./")
+                    text = rg_json_text(data["lines"]).removesuffix("\n").removesuffix("\r")
+                    yield "match", path, data.get("line_number"), text
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise SearchError(f"invalid rg JSON: {exc}") from exc
+
+
+def iter_checked_paths(iterator, tree, stats):
+    """Count only iterator failures as traversal errors; emission happens outside."""
+    try:
+        while True:
+            try:
+                path = next(iterator)
+            except StopIteration:
+                return
+            except Exception as exc:
+                stats["traversal_errors"] += 1
+                print(
+                    f"ERROR: CAS traversal failed for tree {tree.get('digest') or 'unknown'}: {exc}",
+                    file=sys.stderr,
+                )
+                return
+            yield path
+    finally:
+        close = getattr(iterator, "close", None)
+        if close is not None:
+            close()
+
+
+class RecordDeduplicator:
+    """Avoid storing output-sized state unless junction stripping requires it."""
+
+    def __init__(self, enabled):
+        self.seen = set() if enabled else None
+
+    def duplicate(self, kind, display, path, line=None):
+        if self.seen is None:
+            return False
+        key = (kind, display, path, line)
+        if key in self.seen:
+            return True
+        self.seen.add(key)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1214,9 +1314,13 @@ class CasGitreviewCache(MountedGitreviewCache):
         if rel_dir not in self.dir_cache:
             path = f"{rel_dir}/.gitreview" if rel_dir else ".gitreview"
             info = None
-            if self.directory.isfile(path, follow_symlinks=False):
-                with self.directory.open_file(path, mode="r") as f:
-                    info = parse_gitreview_text(f.read())
+            try:
+                if self.directory.isfile(path, follow_symlinks=False):
+                    with self.directory.open_file(path, mode="rb") as f:
+                        info = parse_gitreview_text(f.read().decode("utf-8", "replace"))
+            except Exception:
+                # Origin enrichment is optional; unavailable metadata is not a search error.
+                info = None
             self.dir_cache[rel_dir] = info
         return self.dir_cache[rel_dir]
 
@@ -1859,31 +1963,37 @@ class FuseMountManager:
         raise RuntimeError(f"timed out waiting for buildbox-fuse mount: {mountpoint}")
 
     def cleanup(self):
-        for digest_value, (mountpoint, proc, mounted_by_us) in list(self.mounts.items()):
-            should_unmount = False
-
-            if self.force_unmount:
-                should_unmount = True
-            elif mounted_by_us and not self.keep_mounts:
-                should_unmount = True
-
-            if should_unmount:
-                if not unmount_mountpoint(mountpoint):
-                    print(f"WARNING: could not unmount {mountpoint}", file=sys.stderr)
+        for mountpoint, proc, mounted_by_us in list(self.mounts.values()):
+            if not self.force_unmount and (not mounted_by_us or self.keep_mounts):
+                continue
+            try:
+                try:
+                    unmount_mountpoint(mountpoint)
+                finally:
+                    if proc is not None:
+                        stop_process(proc)
+                if os.path.ismount(mountpoint):
+                    print(
+                        f"WARNING: mount remains live after cleanup: {mountpoint}", file=sys.stderr
+                    )
                     continue
-
-                if proc is not None:
-                    try:
-                        proc.wait(timeout=10)
-                    except Exception:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                            proc.wait()
                 Path(mountpoint).rmdir()
                 Path(f"{mountpoint}.fuse.log").unlink(missing_ok=True)
+            except Exception as exc:
+                print(f"WARNING: cleanup failed for {mountpoint}: {exc}", file=sys.stderr)
+
+
+def stop_process(proc):
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -2054,7 +2164,9 @@ def create_project(Project, context, args, fetch_subprojects=None):
     callback = fetch_subprojects if args.fetch_subprojects else refuse_fetch
     if callback is None:
         raise RuntimeError("No BuildStream subproject fetch callback is available")
-    return Project(os.getcwd(), context, fetch_subprojects=callback)
+    return Project(
+        args.directory, context, cli_options=dict(args.option), fetch_subprojects=callback
+    )
 
 
 def call_load_selection(stream, target: str, selection):
@@ -2145,6 +2257,7 @@ def print_stats(stats: dict) -> None:
     print(f"  cached elements:      {stats['cached_elements']}", file=sys.stderr)
     print(f"  sourceless elements:  {stats['sourceless_elements']}", file=sys.stderr)
     print(f"  uncached elements:    {stats['uncached_elements']}", file=sys.stderr)
+    print(f"  unresolved elements:  {stats['unresolved_elements']}", file=sys.stderr)
     print(f"  no-digest elements:   {stats['no_digest_elements']}", file=sys.stderr)
     print(f"  duplicate elements:   {stats['duplicate_elements']}", file=sys.stderr)
 
@@ -2170,7 +2283,7 @@ def print_stats(stats: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> int:
+def _main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
@@ -2233,6 +2346,7 @@ def main() -> int:
         "cached_elements": 0,
         "sourceless_elements": 0,
         "uncached_elements": 0,
+        "unresolved_elements": 0,
         "no_digest_elements": 0,
         "duplicate_elements": 0,
         "trees": 0,
@@ -2281,7 +2395,7 @@ def main() -> int:
     stream = None
     mount_manager = None
     out = LineBuffer()
-    seen_records = set()
+    dedup = RecordDeduplicator(args.strip_junctions)
     source_info_cache = {}
 
     try:
@@ -2332,6 +2446,14 @@ def main() -> int:
 
                     if status == "nosources":
                         stats["sourceless_elements"] += 1
+                        continue
+
+                    if status == "unresolved":
+                        stats["unresolved_elements"] += 1
+                        print(
+                            f"ERROR: source refs are unresolved: {label} ({detail})",
+                            file=sys.stderr,
+                        )
                         continue
 
                     if status == "uncached":
@@ -2395,7 +2517,11 @@ def main() -> int:
                 stats["load_seconds"] = time.monotonic() - load_start
 
                 exit_code = 1
-                if stats["uncached_elements"] > 0 or (use_fuse and stats["no_digest_elements"] > 0):
+                if (
+                    stats["uncached_elements"] > 0
+                    or stats["unresolved_elements"] > 0
+                    or (use_fuse and stats["no_digest_elements"] > 0)
+                ):
                     exit_code = 2
 
                 if not trees:
@@ -2412,11 +2538,8 @@ def main() -> int:
                         element_info["recipe"] if args.strip_junctions else element_info["label"]
                     )
 
-                    key = ("file", display, rel_path)
-                    if key in seen_records:
+                    if dedup.duplicate("file", display, rel_path):
                         return
-
-                    seen_records.add(key)
 
                     if args.json:
                         record = {
@@ -2444,11 +2567,8 @@ def main() -> int:
                         element_info["recipe"] if args.strip_junctions else element_info["label"]
                     )
 
-                    key = ("match", display, rel_path, line_number, text)
-                    if key in seen_records:
+                    if dedup.duplicate("match", display, rel_path, line_number):
                         return
-
-                    seen_records.add(key)
 
                     if args.json:
                         record = {
@@ -2519,11 +2639,10 @@ def main() -> int:
                         else:
                             path_iterator = iter_relative_paths(directory)
 
-                        try:
-                            for path in path_iterator:
+                        with closing(iter_checked_paths(iter(path_iterator), tree, stats)) as paths:
+                            for path in paths:
                                 if not matcher(path):
                                     continue
-
                                 for element_info in tree["elements"]:
                                     origin = get_origin_for_element_path(
                                         element_info,
@@ -2532,20 +2651,7 @@ def main() -> int:
                                         args,
                                         source_info_cache,
                                     )
-
-                                    emit_file(
-                                        element_info,
-                                        path,
-                                        origin,
-                                    )
-
-                        except Exception as exc:
-                            stats["traversal_errors"] += 1
-                            print(
-                                f"ERROR: CAS traversal failed for tree "
-                                f"{tree.get('digest') or 'unknown'}: {exc}",
-                                file=sys.stderr,
-                            )
+                                    emit_file(element_info, path, origin)
 
                     stats["search_seconds"] = time.monotonic() - search_start
 
@@ -2553,6 +2659,7 @@ def main() -> int:
 
                     if (
                         stats["uncached_elements"] > 0
+                        or stats["unresolved_elements"] > 0
                         or stats["traversal_errors"] > 0
                         or stats["search_errors"] > 0
                     ):
@@ -2577,7 +2684,7 @@ def main() -> int:
                     force_unmount=args.force_unmount,
                 )
 
-                mount_map = []
+                mounted_trees = []
 
                 for tree in trees.values():
                     try:
@@ -2597,12 +2704,7 @@ def main() -> int:
                         args.gitreview_nearest,
                     )
 
-                    mount_map.append(
-                        (
-                            mountpoint.rstrip("/") + "/",
-                            tree,
-                        )
-                    )
+                    mounted_trees.append(tree)
 
                     stats["mounted_trees"] += 1
 
@@ -2611,165 +2713,33 @@ def main() -> int:
                 if stats["mount_errors"] > 0:
                     exit_code = 2
 
-                if not mount_map:
+                if not mounted_trees:
                     if exit_code != 2:
                         exit_code = 1
                     return exit_code
 
-                mount_map.sort(key=lambda item: len(item[0]), reverse=True)
-
-                def resolve_mounted_path(path: str):
-                    for prefix, tree in mount_map:
-                        if path.startswith(prefix):
-                            return tree, path[len(prefix) :]
-                    return None, None
-
-                # ------------------------------------------------------------
-                # FUSE search phase
-                # ------------------------------------------------------------
-
                 search_start = time.monotonic()
-
-                mounted_paths = [tree["mountpoint"] for _, tree in mount_map]
-
-                common_rg_args = [
-                    "--hidden",
-                    "--no-ignore",
-                    "--glob",
-                    "!**/.git/**",
-                ]
-
-                for glob_pattern in args.glob:
-                    common_rg_args.extend(["--glob", glob_pattern])
-
-                for exclude_pattern in args.exclude:
-                    if exclude_pattern.startswith("!"):
-                        common_rg_args.extend(["--glob", exclude_pattern])
-                    else:
-                        common_rg_args.extend(["--glob", f"!{exclude_pattern}"])
-
-                if args.find is not None:
-                    cmd = ["rg", "--files", "--null", "--hidden", "--no-ignore"]
-                    matcher = make_path_filter(args)
-
-                    cmd.extend(mounted_paths)
-
-                    for line in iter_rg_output(cmd, null=True):
-                        path = line
-                        if not path:
-                            continue
-
-                        tree, rel_path = resolve_mounted_path(path)
-                        if tree is None or not matcher(rel_path):
-                            continue
-
-                        for element_info in tree["elements"]:
-                            origin = get_origin_for_element_path(
-                                element_info,
-                                rel_path,
-                                tree,
-                                args,
-                                source_info_cache,
-                            )
-                            emit_file(element_info, rel_path, origin)
-
-                else:
-                    if args.files_with_matches:
-                        cmd = ["rg", "--files-with-matches", "--null"]
-                        cmd.extend(common_rg_args)
-
-                        if args.ignore_case:
-                            cmd.append("--ignore-case")
-
-                        if args.fixed_string:
-                            cmd.append("--fixed-strings")
-
-                        if args.binary_files == "text":
-                            cmd.append("--text")
-
-                        cmd.extend(["--", args.pattern])
-                        cmd.extend(mounted_paths)
-
-                        for line in iter_rg_output(cmd, null=True):
-                            path = line
-                            if not path:
-                                continue
-
-                            tree, rel_path = resolve_mounted_path(path)
-                            if tree is None:
-                                continue
-
-                            for element_info in tree["elements"]:
-                                origin = get_origin_for_element_path(
-                                    element_info,
-                                    rel_path,
-                                    tree,
-                                    args,
-                                    source_info_cache,
-                                )
-                                emit_file(element_info, rel_path, origin)
-
-                    else:
-                        cmd = ["rg", "--json"]
-                        cmd.extend(common_rg_args)
-
-                        if args.ignore_case:
-                            cmd.append("--ignore-case")
-
-                        if args.fixed_string:
-                            cmd.append("--fixed-strings")
-
-                        if args.binary_files == "text":
-                            cmd.append("--text")
-
-                        cmd.extend(["--", args.pattern])
-                        cmd.extend(mounted_paths)
-
-                        for line in iter_rg_output(cmd, null=False):
-                            line = line.strip()
-                            if not line:
-                                continue
-
-                            try:
-                                event = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-
-                            if event.get("type") != "match":
-                                continue
-
-                            data = event.get("data", {})
-
-                            path_obj = data.get("path", {})
-                            path = rg_json_text(path_obj)
-
-                            line_number = data.get("line_number")
-                            text = rg_json_text(data.get("lines", {}))
-
-                            if text.endswith("\n"):
-                                text = text[:-1]
-                            if text.endswith("\r"):
-                                text = text[:-1]
-
-                            tree, rel_path = resolve_mounted_path(path)
-                            if tree is None:
-                                continue
-
-                            for element_info in tree["elements"]:
-                                origin = get_origin_for_element_path(
-                                    element_info,
-                                    rel_path,
-                                    tree,
-                                    args,
-                                    source_info_cache,
-                                )
-                                emit_match(
-                                    element_info,
-                                    rel_path,
-                                    line_number,
-                                    text,
-                                    origin,
-                                )
+                for tree in mounted_trees:
+                    try:
+                        with closing(iter_mounted_matches(args, tree["mountpoint"])) as matches:
+                            for kind, rel_path, line_number, text in matches:
+                                for element_info in tree["elements"]:
+                                    origin = get_origin_for_element_path(
+                                        element_info,
+                                        rel_path,
+                                        tree,
+                                        args,
+                                        source_info_cache,
+                                    )
+                                    if kind == "file":
+                                        emit_file(element_info, rel_path, origin)
+                                    else:
+                                        emit_match(
+                                            element_info, rel_path, line_number, text, origin
+                                        )
+                    except SearchError as exc:
+                        stats["search_errors"] += 1
+                        print(f"ERROR: tree {tree['digest']}: {exc}", file=sys.stderr)
 
                 stats["search_seconds"] = time.monotonic() - search_start
 
@@ -2777,6 +2747,7 @@ def main() -> int:
 
                 if (
                     stats["uncached_elements"] > 0
+                    or stats["unresolved_elements"] > 0
                     or stats["mount_errors"] > 0
                     or stats["search_errors"] > 0
                     or stats["no_digest_elements"] > 0
@@ -2785,7 +2756,7 @@ def main() -> int:
                 else:
                     exit_code = 0 if stats["results"] > 0 else 1
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, BrokenPipeError):
                 raise
 
             except Exception as exc:
@@ -2800,10 +2771,14 @@ def main() -> int:
                 exit_code = 2
 
             finally:
-                if mount_manager is not None:
-                    mount_manager.cleanup()
+                try:
+                    if mount_manager is not None:
+                        mount_manager.cleanup()
+                finally:
+                    cleanup_stream(stream)
 
-                cleanup_stream(stream)
+    except BrokenPipeError:
+        raise
 
     except KeyboardInterrupt:
         print("Interrupted", file=sys.stderr)
@@ -2822,6 +2797,7 @@ def main() -> int:
 
     finally:
         out.flush()
+        sys.stdout.flush()
 
         stats["total_seconds"] = time.monotonic() - start_time
 
@@ -2829,6 +2805,19 @@ def main() -> int:
             print_stats(stats)
 
     return exit_code
+
+
+def main() -> int:
+    try:
+        return _main()
+    except BrokenPipeError:
+        # Prevent interpreter shutdown from flushing the broken stdout again.
+        try:
+            with open(os.devnull, "wb") as sink:
+                os.dup2(sink.fileno(), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        return 141
 
 
 if __name__ == "__main__":

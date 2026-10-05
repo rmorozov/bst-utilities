@@ -24,3 +24,14 @@ Local validation: regression tests run with BuildStream 2.8.0, including its act
 CasBasedDirectory over an isolated file-backed blob store. Daemon integration
 is skipped where Unix sockets are prohibited. CI must validate the real CLI
 fetch/search path. FUSE execution has not been validated on this host.
+
+## PR review follow-up
+
+All eight review threads are addressed in the implementation and regression tests:
+root-relative content globs; quiet closed-pipe cleanup; project directory/options;
+best-effort binary `.gitreview` reads; actionable unresolved-ref diagnostics;
+per-mount cleanup isolation and process reaping; compact optional deduplication
+plus search-error counters; and documented bubblewrap/CAS prerequisites.
+
+A required FUSE fixture now checks content slash globs and exclusions, filenames
+with matches, invalid-pattern statistics and closed-pipe cleanup in CI.

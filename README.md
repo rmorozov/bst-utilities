@@ -23,8 +23,10 @@ python3 -m venv .venv
 python -m pip install '.[buildstream]'
 ```
 
+On Linux, install `bubblewrap` (`bwrap`) even for filename searches; BuildStream
+also needs `buildbox-casd`, normally bundled with its wheel.
 Filename search traverses CAS directory metadata directly. Content search also
-requires Linux FUSE access, `buildbox-fuse`, ripgrep (`rg`) and `fusermount3` or
+requires Linux FUSE access (`/dev/fuse`), `buildbox-fuse`, ripgrep (`rg`) and `fusermount3` or
 `fusermount`. A BuildStream wheel may bundle buildbox-fuse; use an explicit path
 if automatic discovery fails.
 

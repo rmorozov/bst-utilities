@@ -64,6 +64,9 @@ def test_sources_initialized_before_cache_query():
         def update_resolved_state(self):
             calls.append("resolve")
 
+        def is_resolved(self):
+            return True
+
         def get_files(self):
             return "directory"
 
@@ -191,7 +194,7 @@ def test_invalid_cli(arguments, monkeypatch):
 
 def test_project_fetch_subprojects_uses_callback(monkeypatch):
     class Project:
-        def __init__(self, cwd, context, *, fetch_subprojects):
+        def __init__(self, cwd, context, *, cli_options, fetch_subprojects):
             self.fetch = fetch_subprojects
 
     project = sg.create_project(Project, object(), args())

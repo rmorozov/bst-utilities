@@ -40,7 +40,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap fuse3 ripgrep
       - run: python -m pip install -e '.[dev]' '${{ matrix.bst }}'
       - run: bst --version
+      - run: test -c /dev/fuse && test -r /dev/fuse && test -w /dev/fuse
       - run: pytest -ra
+        env:
+          BST_UTILITIES_REQUIRE_FUSE: 1

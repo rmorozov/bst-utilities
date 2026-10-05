@@ -10,7 +10,10 @@ first. No checkout per element is needed.
 Requires Python 3.10+ and BuildStream >=2.8,<3 in the same environment. The tool
 uses private BuildStream APIs. CI exercises 2.8.0 and the latest available 2.x;
 future releases are not guaranteed compatible merely by satisfying the version
-range. BuildStream's CAS daemon still runs in filename mode; “CAS-direct” means
+range. On Linux, both modes require `bubblewrap` (`bwrap`) and `buildbox-casd`
+(the daemon is normally bundled with the BuildStream wheel). FUSE additionally
+requires `buildbox-fuse`, `rg`, a usable `/dev/fuse`, and `fusermount3`/`fusermount`.
+BuildStream's CAS daemon still runs in filename mode; “CAS-direct” means
 no FUSE mount, not no daemon.
 
 ```sh
@@ -22,6 +25,7 @@ bst-source-grep TARGET --find GLOB [options]
 | --- | --- |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
+| `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |
 | `--config FILE` | BuildStream user configuration, including cache location and project overrides. |
 | `--glob GLOB`, `--exclude GLOB` | Repeatable file filters. Filename includes are ORed; excludes always win and also match ancestors. |
 | `-i`, `-F`, `-n`, `-l` | Ignore case, literal content pattern, show line numbers, filenames with content matches. `-i` also applies to the find pattern. |
@@ -46,7 +50,11 @@ Text output is `element:path:text` (with `-n`, `element:path:line:text`) or
 `element:path` for file results. Origins add the source id before the path.
 Use JSON output when names contain newlines or colons. Non-UTF-8 names/content
 are escaped in JSON when supplied by rg; plain text can replace invalid bytes.
-Source attribution is a heuristic, not proof of which overlapping source wrote
+Content globs are evaluated relative to each source-tree root. Each distinct
+mounted tree gets one rg process so the requested root remains correct and
+ripgrep can prune excluded paths. Normal searches retain no output deduplication
+set; `--strip-junctions` retains compact path/line keys because display names can
+collide. Source attribution is a heuristic, not proof of which overlapping source wrote
 a file.
 
 | Exit code | Meaning |
@@ -55,6 +63,7 @@ a file.
 | 1 | No matches, including an entirely sourceless selection |
 | 2 | Error or incomplete search, even if some matches were emitted |
 | 130 | Interrupted |
+| 141 | Output pipe closed by a reader (e.g. `head`); quiet exit after cleanup |
 
 ## Cache and mounts
 
@@ -76,19 +85,20 @@ empty directories/logs for diagnosis. Unmount failures report the retained path.
 
 `--cas-dir`, `--mount-dir`, `--buildbox-fuse` and `--digest-function` allow
 explicit backend configuration. The tool discovers bundled FUSE executables
-and supports `BUILDBOX_FUSE` as an environment override. Search processes spool
+and supports `BUILDBOX_FUSE` as an environment override. Cleanup attempts every owned mount and reaps its process even when an unmount
+or directory removal fails. Search processes spool
 stderr to a temporary file while stdout is streamed; diagnostics are bounded
 when reported. Interruptions terminate/reap rg before mount cleanup.
 
 ## Validation and next steps
 
-Regression tests cover filters, source-key initialization, callback wiring,
-file-only CAS traversal, digest extraction, origins, cache concurrency/newlines,
-subprocess failures/interruption and mount isolation. An offline end-to-end test
-fetches a local source with the real BuildStream CLI and checks cached find,
-filters and exit statuses in CI. FUSE content mode still needs validation on a
-host with `/dev/fuse`; it is not covered by the hosted CAS integration test.
+Regression tests cover filters, source-key initialization, callback/options
+wiring, regular-file CAS traversal, best-effort origins, cache concurrency,
+closed pipes, subprocess failures, deduplication state and cleanup failures.
+CI requires CAS and real FUSE integration against BuildStream 2.8.0 and latest
+2.x: slash globs, `-l`, conditional sources, unresolved refs, non-UTF-8 metadata,
+error counters and closed content-output pipes. Restricted local environments
+may skip daemon tests; CI checks FUSE prerequisites and does not accept that skip.
 
-Future work: a dedicated FUSE integration fixture, stricter validation of glob
-extensions in filename mode, and extraction of a compatibility module when a
-second tool needs the same BuildStream loading code.
+See [the task registry](tasks/README.md) for prioritized next steps, including
+benchmarking, module boundaries, bounded mounts and improved diagnostics.
