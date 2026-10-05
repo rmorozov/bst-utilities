@@ -53,19 +53,14 @@ performance claim. Reprioritize after benchmarks or user feedback.
 
 ## Suggested next sequence
 
-1. **BSG-010: measure first.** Capture startup, source loading, fresh/warm index,
-   many-tree content, output fan-out and peak RSS. Record exact versions and
-   fixture dimensions; do not call a fresh tool index a cold filesystem cache.
-2. **BSG-012: prioritize bounded mount lifetimes.** The reviewer measured 300
-   distinct three-file source trees (two runs per commit): mount time 15.5 s,
-   per-tree rg search time 1.55 s and total wall time 20.0 s. The measurements
-   were reported in [PR review](https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451),
-   not reproduced here. Reproduce that fixture, then compare serial scoped
-   mount/search/cleanup with a small bounded pool. Concurrency gains remain a
-   hypothesis; active mounts and cancellation cleanup must remain bounded.
-   The current readiness loop sleeps 50 ms per poll, close to the reported
-   52 ms/tree. Separate polling delay from actual mount startup and compare a
-   shorter adaptive initial poll before adding worker-pool complexity.
+1. **BSG-010 / BSG-012 (done): measure, then bound mount lifetimes.** The
+   benchmark (`scripts/bench_source_grep.py`) reproduced the 300-tree baseline:
+   the fixed 50 ms readiness poll, not buildbox-fuse startup (~3 ms), dominated
+   mounting. Scoped serial mounts with backoff polling and SIGTERM-driven
+   unmounts cut that scenario from 20.0 s to 5.1 s with one live mount.
+2. **BSG-021: bounded pool, if many-tree searches matter.** A prototype with four
+   workers cut the remaining per-tree mount/search/unmount stage from 3.5 s to
+   1.0 s; it needs ordered streaming output and pooled cancellation cleanup.
 3. **BSG-011 and BSG-016: establish boundaries and glob contracts.** The private
    BuildStream adapter and differential matcher tests reduce regression risk.
    These can proceed alongside the benchmark/lifecycle work; preserve CLI and

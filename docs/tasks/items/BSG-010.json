@@ -6,7 +6,7 @@
     "title": "Measure startup, traversal, search and memory costs",
     "area": "performance",
     "priority": "P1",
-    "status": "ready",
+    "status": "done",
     "effort": "M",
     "problem": "Existing aggregate timings do not identify dominant costs; proposed speedups are hypotheses. Reviewer-reported baseline (not reproduced here): 300 unique three-file trees, two runs/commit, 900 matches; mounting 15.5 s, search 0.095 s (one rg) versus 1.55 s (per-tree rg), wall 18.5 versus 20.0 s.",
     "proposal": "Create offline repeatable fixtures and a benchmark command separating fresh index, warm index, narrow glob, broad content and many identical source trees. Record versions, file/tree counts, peak RSS, mount count and process launches. Distinguish a fresh tool index from cold OS/BuildStream caches.",
@@ -20,7 +20,14 @@
     ],
     "depends_on": [],
     "evidence": [
-      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451"
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451",
+      "Branch claude/project-thread-ytzju7 (PR pending).",
+      "scripts/bench_source_grep.py builds offline fixtures (20000 small files, 4x16 MiB files, 300 unique 3-file trees, 100 elements sharing one tree) in a temporary work directory and runs 9 scenarios with repeat distributions, per-phase timings, peak mounts, process counts and RSS.",
+      "Measured on Python 3.11.15, BuildStream 2.8.0, buildbox-fuse 1.4.15, ripgrep 14.1.0, 4 CPUs, Linux 6.18, as root; 3 repeats, medians.",
+      "Reviewer fixture reproduced on main 775a143: content-unique-trees wall 19.97 s, mount 15.43 s, search 1.61 s, deferred cleanup 1.54 s.",
+      "Direct buildbox-fuse probe (100 trees): mount ready 2.9 ms median, umount 2.0 ms, SIGTERM-driven unmount 0.85 ms. The fixed 50 ms readiness poll accounted for ~92% of the reported mount stage.",
+      "Bounded-pool prototype (mount+rg+unmount per tree, 300 trees): 1 worker 3.48 s, 2 workers 1.82 s, 4 workers 0.99 s, 8 workers 0.81 s; follow-up recorded as BSG-021.",
+      "tests/test_integration.py::test_benchmark_harness_smoke runs the tiny scale in CI."
     ]
   }
 }

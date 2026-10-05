@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-021",
+    "tool": "bst-source-grep",
+    "title": "Overlap per-tree mount, search and unmount with a small bounded pool",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "After BSG-012 the many-tree content search is serial: ~4.5 ms mount, ~5 ms rg and ~2 ms release per tree (300 trees: 3.5 s of a 5.1 s wall). A prototype pool of 4 workers cut that stage to 0.99 s on 4 CPUs.",
+    "proposal": "Run mount+rg (spooling rg output to a temporary file) for up to N trees concurrently, emit completed trees in input order from the main thread, and release each tree after emission. Default N to min(4, CPUs); keep N=1 equivalent to current behaviour.",
+    "acceptance": [
+      "Output order and content are identical to serial mode for every scenario in scripts/bench_source_grep.py.",
+      "Active owned mounts and rg processes never exceed the configured bound; --stats reports the observed peak.",
+      "Interrupt, closed pipe and per-tree mount/search errors clean up every worker's mount and process.",
+      "Benchmark shows the many-tree wall-time gain without regressing single-tree scenarios or memory beyond the spooled output."
+    ],
+    "depends_on": [
+      "BSG-012"
+    ],
+    "evidence": [
+      "Prototype measurement recorded in BSG-010 evidence."
+    ]
+  }
+}

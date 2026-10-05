@@ -53,6 +53,10 @@ BUILDBOX_FUSE_NAMES = (
     "buildbox-fuse.exe",
 )
 
+# Readiness polling backs off from 1 ms to 50 ms per buildbox-fuse mount.
+MOUNT_POLL_INITIAL = 0.001
+MOUNT_POLL_MAX = 0.05
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -1902,6 +1906,8 @@ class FuseMountManager:
         self.keep_mounts = keep_mounts
         self.force_unmount = force_unmount
         self.mounts = {}
+        self.started = 0
+        self.peak = 0
 
     def ensure_mount(self, digest_value: str) -> str:
         if digest_value in self.mounts:
@@ -1934,11 +1940,16 @@ class FuseMountManager:
         except Exception as exc:
             raise RuntimeError(f"failed to start buildbox-fuse: {exc}") from exc
 
+        self.started += 1
         deadline = time.monotonic() + 10.0
+        # buildbox-fuse usually mounts within a few milliseconds; a fixed 50 ms
+        # poll made readiness waiting dominate per-tree mount cost.
+        delay = MOUNT_POLL_INITIAL
 
         while time.monotonic() < deadline:
             if os.path.ismount(mountpoint):
                 self.mounts[digest_value] = (mountpoint, proc, True)
+                self.peak = max(self.peak, len(self.mounts))
                 return mountpoint
 
             if proc.poll() is not None:
@@ -1953,7 +1964,8 @@ class FuseMountManager:
 
                 raise RuntimeError(f"buildbox-fuse exited early for {digest_value}: {stderr_text}")
 
-            time.sleep(0.05)
+            time.sleep(delay)
+            delay = min(delay * 2, MOUNT_POLL_MAX)
 
         proc.terminate()
         try:
@@ -1964,25 +1976,32 @@ class FuseMountManager:
 
         raise RuntimeError(f"timed out waiting for buildbox-fuse mount: {mountpoint}")
 
-    def cleanup(self):
-        for mountpoint, proc, mounted_by_us in list(self.mounts.values()):
-            if not self.force_unmount and (not mounted_by_us or self.keep_mounts):
-                continue
+    def release(self, digest_value: str) -> None:
+        """Tear down one owned mount unless the user asked to keep it."""
+        mountpoint, proc, mounted_by_us = self.mounts[digest_value]
+        if not self.force_unmount and (not mounted_by_us or self.keep_mounts):
+            return
+        del self.mounts[digest_value]
+        try:
             try:
-                try:
-                    unmount_mountpoint(mountpoint)
-                finally:
-                    if proc is not None:
-                        stop_process(proc)
+                # buildbox-fuse unmounts on SIGTERM, which avoids spawning a
+                # fusermount process per tree; fall back if the mount survives.
+                if proc is not None:
+                    stop_process(proc)
+            finally:
                 if os.path.ismount(mountpoint):
-                    print(
-                        f"WARNING: mount remains live after cleanup: {mountpoint}", file=sys.stderr
-                    )
-                    continue
-                Path(mountpoint).rmdir()
-                Path(f"{mountpoint}.fuse.log").unlink(missing_ok=True)
-            except Exception as exc:
-                print(f"WARNING: cleanup failed for {mountpoint}: {exc}", file=sys.stderr)
+                    unmount_mountpoint(mountpoint)
+            if os.path.ismount(mountpoint):
+                print(f"WARNING: mount remains live after cleanup: {mountpoint}", file=sys.stderr)
+                return
+            Path(mountpoint).rmdir()
+            Path(f"{mountpoint}.fuse.log").unlink(missing_ok=True)
+        except Exception as exc:
+            print(f"WARNING: cleanup failed for {mountpoint}: {exc}", file=sys.stderr)
+
+    def cleanup(self):
+        for digest_value in list(self.mounts):
+            self.release(digest_value)
 
 
 def stop_process(proc):
@@ -2254,6 +2273,16 @@ def get_origin_for_element_path(
 # ---------------------------------------------------------------------------
 
 
+def peak_rss_mib() -> float:
+    """Peak resident set of this process only (not casd, buildbox-fuse or rg)."""
+    try:
+        import resource
+
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    except (ImportError, OSError):
+        return 0.0
+
+
 def print_stats(stats: dict) -> None:
     print("", file=sys.stderr)
     print("bst-source-grep statistics:", file=sys.stderr)
@@ -2268,6 +2297,9 @@ def print_stats(stats: dict) -> None:
 
     print(f"  unique trees:         {stats['trees']}", file=sys.stderr)
     print(f"  mounted trees:        {stats['mounted_trees']}", file=sys.stderr)
+    print(f"  peak mounts:          {stats['peak_mounts']}", file=sys.stderr)
+    print(f"  fuse processes:       {stats['fuse_processes']}", file=sys.stderr)
+    print(f"  rg processes:         {stats['rg_processes']}", file=sys.stderr)
     print(f"  mount errors:         {stats['mount_errors']}", file=sys.stderr)
     print(f"  traversal errors:     {stats['traversal_errors']}", file=sys.stderr)
     print(f"  search errors:        {stats['search_errors']}", file=sys.stderr)
@@ -2276,10 +2308,12 @@ def print_stats(stats: dict) -> None:
     print(f"  path cache misses:    {stats['path_cache_misses']}", file=sys.stderr)
 
     print(f"  results:              {stats['results']}", file=sys.stderr)
+    print(f"  peak rss:             {stats['peak_rss_mib']:.1f} MiB", file=sys.stderr)
 
     print(f"  load time:            {format_seconds(stats['load_seconds'])}", file=sys.stderr)
     print(f"  mount time:           {format_seconds(stats['mount_seconds'])}", file=sys.stderr)
     print(f"  search time:          {format_seconds(stats['search_seconds'])}", file=sys.stderr)
+    print(f"  cleanup time:         {format_seconds(stats['cleanup_seconds'])}", file=sys.stderr)
     print(f"  total time:           {format_seconds(stats['total_seconds'])}", file=sys.stderr)
 
 
@@ -2290,7 +2324,7 @@ def print_stats(stats: dict) -> None:
 
 def _main() -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_intermixed_args()
 
     if args.find is None and args.pattern is None:
         parser.error("PATTERN is required unless --find is used")
@@ -2356,6 +2390,9 @@ def _main() -> int:
         "duplicate_elements": 0,
         "trees": 0,
         "mounted_trees": 0,
+        "peak_mounts": 0,
+        "fuse_processes": 0,
+        "rg_processes": 0,
         "mount_errors": 0,
         "traversal_errors": 0,
         "search_errors": 0,
@@ -2365,7 +2402,9 @@ def _main() -> int:
         "load_seconds": 0.0,
         "mount_seconds": 0.0,
         "search_seconds": 0.0,
+        "cleanup_seconds": 0.0,
         "total_seconds": 0.0,
+        "peak_rss_mib": 0.0,
     }
 
     try:
@@ -2678,8 +2717,6 @@ def _main() -> int:
                 # FUSE mount phase
                 # ------------------------------------------------------------
 
-                mount_start = time.monotonic()
-
                 mount_manager = FuseMountManager(
                     buildbox_fuse=buildbox_fuse,
                     cas_dir=cas_dir,
@@ -2689,9 +2726,10 @@ def _main() -> int:
                     force_unmount=args.force_unmount,
                 )
 
-                mounted_trees = []
-
+                # Each tree is mounted, searched and released before the next one,
+                # so at most one owned mount is live unless --keep-mounts is used.
                 for tree in trees.values():
+                    phase_start = time.monotonic()
                     try:
                         mountpoint = mount_manager.ensure_mount(tree["digest"])
                     except Exception as exc:
@@ -2701,7 +2739,10 @@ def _main() -> int:
                             file=sys.stderr,
                         )
                         continue
+                    finally:
+                        stats["mount_seconds"] += time.monotonic() - phase_start
 
+                    stats["mounted_trees"] += 1
                     tree["mountpoint"] = mountpoint
                     tree["gitreview"] = MountedGitreviewCache(
                         mountpoint,
@@ -2709,24 +2750,10 @@ def _main() -> int:
                         args.gitreview_nearest,
                     )
 
-                    mounted_trees.append(tree)
-
-                    stats["mounted_trees"] += 1
-
-                stats["mount_seconds"] = time.monotonic() - mount_start
-
-                if stats["mount_errors"] > 0:
-                    exit_code = 2
-
-                if not mounted_trees:
-                    if exit_code != 2:
-                        exit_code = 1
-                    return exit_code
-
-                search_start = time.monotonic()
-                for tree in mounted_trees:
+                    phase_start = time.monotonic()
                     try:
-                        with closing(iter_mounted_matches(args, tree["mountpoint"])) as matches:
+                        stats["rg_processes"] += 1
+                        with closing(iter_mounted_matches(args, mountpoint)) as matches:
                             for kind, rel_path, line_number, text in matches:
                                 for element_info in tree["elements"]:
                                     origin = get_origin_for_element_path(
@@ -2745,8 +2772,13 @@ def _main() -> int:
                     except SearchError as exc:
                         stats["search_errors"] += 1
                         print(f"ERROR: tree {tree['digest']}: {exc}", file=sys.stderr)
+                    finally:
+                        stats["search_seconds"] += time.monotonic() - phase_start
 
-                stats["search_seconds"] = time.monotonic() - search_start
+                    phase_start = time.monotonic()
+                    tree["gitreview"] = None
+                    mount_manager.release(tree["digest"])
+                    stats["cleanup_seconds"] += time.monotonic() - phase_start
 
                 out.flush()
 
@@ -2779,6 +2811,8 @@ def _main() -> int:
                 try:
                     if mount_manager is not None:
                         mount_manager.cleanup()
+                        stats["peak_mounts"] = mount_manager.peak
+                        stats["fuse_processes"] = mount_manager.started
                 finally:
                     cleanup_stream(stream)
 
@@ -2805,6 +2839,7 @@ def _main() -> int:
         sys.stdout.flush()
 
         stats["total_seconds"] = time.monotonic() - start_time
+        stats["peak_rss_mib"] = peak_rss_mib()
 
         if args.stats:
             print_stats(stats)

@@ -36,7 +36,7 @@ bst-source-grep TARGET --find GLOB [options]
 | `--gitreview-nearest` | Use nearest ancestor `.gitreview`; otherwise use tree root. Works with both backends. |
 | `--strip-junctions` / `--unique-recipes` | Remove junction prefixes and deduplicate identical recipe/path records. Can collapse distinct junction instances. |
 | `--fetch-subprojects` | Explicitly allow fetching missing junction sources required to load the project. Default is refuse with a diagnostic. |
-| `--stats`, `--traceback` | Diagnostics to stderr. |
+| `--stats`, `--traceback` | Diagnostics to stderr. Stats include per-phase load, mount, search and cleanup time, peak mounts, and buildbox-fuse/rg process counts. |
 
 Filename globs support `*`, `?`, character classes and `**`. A pattern with no
 slash matches the basename at any depth; slash patterns match the entire
@@ -78,8 +78,13 @@ the attached prototype are ignored and can be removed manually.
 
 FUSE mounts default to `~/.cache/bst-source-grep/mounts`. Each run creates its own
 mount directory, so another search cannot unmount it while it is being read.
-Successful cleanup unmounts, reaps the process and removes mount/log paths.
-`--keep-mounts` retains this run's mounts; `--force-unmount` overrides that flag.
+Unique source trees are processed one at a time: mount, search with one rg, then
+unmount, reap the buildbox-fuse process and remove mount/log paths before the next
+tree. A run therefore holds at most one owned mount. Mount readiness is polled
+from 1 ms with exponential backoff up to 50 ms, so a quick buildbox-fuse start is
+not rounded up to a fixed poll interval.
+`--keep-mounts` retains this run's mounts (so every searched tree stays mounted
+until exit); `--force-unmount` overrides that flag.
 Retained mounts are not reused by later searches. Failed mount attempts may leave
 empty directories/logs for diagnosis. Unmount failures report the retained path.
 
@@ -99,6 +104,21 @@ CI requires CAS and real FUSE integration against BuildStream 2.8.0 and latest
 2.x: slash globs, `-l`, conditional sources, unresolved refs, non-UTF-8 metadata,
 error counters and closed content-output pipes. Restricted local environments
 may skip daemon tests; CI checks FUSE prerequisites and does not accept that skip.
+
+## Benchmarks
+
+`python scripts/bench_source_grep.py [--scale tiny|default] [--repeats N]` builds
+offline fixtures (many small files, a few large files, many unique trees, many
+elements sharing one tree) in a temporary directory, fetches them with the real
+`bst`, and reports median (min-max) per scenario: interpreter startup, project
+load, mount, search, cleanup, remaining BuildStream/casd time, tool and process-tree
+peak RSS, results, peak mounts and rg processes. `--json-out FILE` keeps raw runs.
+Content scenarios are skipped without `/dev/fuse` and `rg`. Each "fresh index" run
+rebuilds the tool's path index; it does not drop OS or BuildStream caches.
+
+On 300 unique three-file trees (BuildStream 2.8.0, 4 CPUs), scoped mounts with
+backoff polling took the content search from 20.0 s (15.4 s of it mounting) to
+5.1 s, with one live mount instead of 300.
 
 See [the task registry](tasks/README.md) for prioritized next steps, including
 benchmarking, module boundaries, bounded mounts and improved diagnostics.

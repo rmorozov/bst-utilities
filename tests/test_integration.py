@@ -251,3 +251,65 @@ def test_fuse_slash_globs_statistics_and_closed_pipe(review_project):
     assert proc.wait(timeout=60) == 141
     assert not proc.stderr.read(), "closed pipe should produce no bogus search diagnostics"
     assert not list(mounts.iterdir())
+
+
+@pytest.mark.integration
+def test_fuse_mounts_one_tree_at_a_time(review_project):
+    p = review_project
+    if not os.path.exists("/dev/fuse"):
+        if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+            pytest.fail("FUSE integration is required but /dev/fuse is missing")
+        pytest.skip("/dev/fuse is unavailable")
+    elements = p.project / "elements"
+    for name in ["adir", "bdir"]:
+        (elements / f"{name}.bst").write_text(
+            f"kind: import\nsources:\n- kind: local\n  path: {name}\n"
+        )
+    (elements / "trees.bst").write_text("kind: stack\ndepends:\n- adir.bst\n- bdir.bst\n")
+    p.fetch("adir.bst")
+    p.fetch("bdir.bst")
+    mounts = p.tmp_path / "mounts"
+    result = p.search("trees.bst", "-n", "dir$", "--json", "--stats", "--mount-dir", str(mounts))
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in result.stdout.splitlines()]
+    assert sorted((r["element"], r["path"], r["line"]) for r in records) == [
+        ("adir.bst", "file.txt", 1),
+        ("bdir.bst", "file.txt", 1),
+    ]
+    assert re.search(r"peak mounts:\s+1\b", result.stderr), result.stderr
+    assert re.search(r"fuse processes:\s+2\b", result.stderr), result.stderr
+    assert re.search(r"rg processes:\s+2\b", result.stderr), result.stderr
+    assert not list(mounts.iterdir())
+
+
+@pytest.mark.integration
+def test_benchmark_harness_smoke(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+    report_path = tmp_path / "bench.json"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "bench_source_grep.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--scale", "tiny", "--repeats", "1"]
+        + ["--json-out", str(report_path)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["environment"]["buildstream"] != "unavailable"
+    by_name = {entry["scenario"]: entry for entry in report["results"]}
+    fresh = by_name["find-fresh-index"]["runs"][0]
+    assert fresh["results"] == 100 and fresh["path cache misses"] == 1
+    assert by_name["find-warm-index"]["runs"][0]["path cache hits"] == 1
+    if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+        trees = by_name["content-unique-trees"]["runs"][0]
+        assert trees["peak mounts"] == 1 and trees["rg processes"] == 5
+        assert by_name["content-duplicate-trees"]["runs"][0]["fuse processes"] == 1
+    assert "| find-warm-index |" in result.stdout

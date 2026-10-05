@@ -6,7 +6,7 @@
     "title": "Mount and search one tree at a time",
     "area": "performance",
     "priority": "P1",
-    "status": "proposed",
+    "status": "done",
     "effort": "M",
     "problem": "All source trees are mounted before searching, although rg now runs sequentially per tree. Peak mounts and resident daemon/process costs grow with unique trees.",
     "proposal": "Prioritize mount lifetimes after BSG-010 reproduces the reviewer baseline. Start with mount/search/cleanup scoped to one tree; compare a configurable small bounded pool, preserving resource ownership and output semantics. Reviewer measurements suggest serial mount startup (~52 ms/tree) dominates rg startup (~5 ms/tree), but pool speedups remain unmeasured. The reported mount stage includes a 50 ms readiness-poll interval in ensure_mount; measure that overhead and compare an adaptive shorter initial poll before attributing the whole stage to actual mount startup or adding a pool.",
@@ -21,7 +21,13 @@
       "BSG-010"
     ],
     "evidence": [
-      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451"
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451",
+      "Branch claude/project-thread-ytzju7 (PR pending).",
+      "Each unique tree is mounted, searched and released before the next; --stats reports peak mounts 1, one buildbox-fuse and one rg process per tree.",
+      "Readiness polling backs off from 1 ms to 50 ms; release stops buildbox-fuse with SIGTERM (it unmounts itself) and falls back to fusermount/umount only if the mount survives.",
+      "content-unique-trees (300 trees): wall 19.97 s -> 5.14 s, mount 15.43 s -> 1.34 s, cleanup 1.54 s -> 0.56 s, peak mounts 300 -> 1; other scenarios unchanged or faster (content-small-files 1.86 -> 1.73 s).",
+      "Bounded pool deferred to BSG-021: measured gain is real (~2.5 s on 300 trees) but needs ordered, streaming output and pooled cancellation cleanup.",
+      "tests/test_mount_lifetime.py and tests/test_integration.py::test_fuse_mounts_one_tree_at_a_time."
     ]
   }
 }

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-022",
+    "tool": "bst-source-grep",
+    "title": "Accept options between TARGET and PATTERN",
+    "area": "usability",
+    "priority": "P1",
+    "status": "done",
+    "effort": "S",
+    "problem": "argparse rejected `bst-source-grep TARGET -n PATTERN` with 'unrecognized arguments: PATTERN', so grep-style option placement failed. Found when the benchmark's output-fanout scenario failed on main.",
+    "proposal": "Parse with parse_intermixed_args so options may appear before, between or after positionals; `--` still allows patterns that start with '-'.",
+    "acceptance": [
+      "TARGET -n PATTERN, -n TARGET PATTERN and TARGET PATTERN -n parse identically.",
+      "Existing invalid combinations still exit 2 with the semantic error."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "Branch claude/project-thread-ytzju7 (PR pending).",
+      "tests/test_mount_lifetime.py::test_options_may_follow_target_and_pattern; benchmark output-fanout passes."
+    ]
+  }
+}
