@@ -34,7 +34,8 @@ calls use. Keep lower-level modules independent of the application/entry point;
 do not add an import back to the old facade to access helpers.
 
 This extraction preserves existing CLI, output, cache format, ordering and
-cleanup behavior, including the fixes already on PR #6. It does not change
+cleanup behavior, including bounded `--jobs` pools, single-tree streaming and
+cancellable cache checks (BSG-021, BSG-024). It does not change
 BuildStream compatibility policy or replace existing introspection fallbacks.
 BSG-011 still tracks stricter unsupported-shape diagnostics and typed records.
 

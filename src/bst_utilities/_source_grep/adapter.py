@@ -7,7 +7,7 @@ import importlib.metadata
 import importlib.util
 
 
-def _bst_get(node, key):
+def bst_get(node, key):
     if node is None:
         return None
 
@@ -24,7 +24,7 @@ def _bst_get(node, key):
     return None
 
 
-def _bst_value(obj, names):
+def bst_value(obj, names):
     """
     Fetch a scalar-ish value from an object or mapping.
 
@@ -45,7 +45,7 @@ def _bst_value(obj, names):
                 value = None
 
             if value is None:
-                value = _bst_get(obj, name)
+                value = bst_get(obj, name)
 
         if callable(value):
             continue

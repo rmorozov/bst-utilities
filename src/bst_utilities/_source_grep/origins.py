@@ -9,7 +9,7 @@ from . import adapter, paths, source_cache
 
 
 def describe_source_object(src, index):
-    kind = adapter._bst_value(
+    kind = adapter.bst_value(
         src,
         (
             "kind",
@@ -20,7 +20,7 @@ def describe_source_object(src, index):
         ),
     )
 
-    url = adapter._bst_value(
+    url = adapter.bst_value(
         src,
         (
             "url",
@@ -38,7 +38,7 @@ def describe_source_object(src, index):
         ),
     )
 
-    ref = adapter._bst_value(
+    ref = adapter.bst_value(
         src,
         (
             "ref",
@@ -54,7 +54,7 @@ def describe_source_object(src, index):
         ),
     )
 
-    track = adapter._bst_value(
+    track = adapter.bst_value(
         src,
         (
             "track",
@@ -63,7 +63,7 @@ def describe_source_object(src, index):
         ),
     )
 
-    directory = adapter._bst_value(
+    directory = adapter.bst_value(
         src,
         (
             "directory",
@@ -73,7 +73,7 @@ def describe_source_object(src, index):
         ),
     )
 
-    gerrit_project = adapter._bst_value(
+    gerrit_project = adapter.bst_value(
         src,
         (
             "gerrit_project",
@@ -104,12 +104,12 @@ def describe_source_object(src, index):
             break
 
     if raw is not None:
-        kind = adapter._bst_get(raw, "kind") or kind
-        url = adapter._bst_get(raw, "url") or adapter._bst_get(raw, "path") or url
-        ref = adapter._bst_get(raw, "ref") or ref
-        track = adapter._bst_get(raw, "track") or track
-        directory = adapter._bst_get(raw, "directory") or directory
-        gerrit_project = adapter._bst_get(raw, "gerrit_project") or gerrit_project
+        kind = adapter.bst_get(raw, "kind") or kind
+        url = adapter.bst_get(raw, "url") or adapter.bst_get(raw, "path") or url
+        ref = adapter.bst_get(raw, "ref") or ref
+        track = adapter.bst_get(raw, "track") or track
+        directory = adapter.bst_get(raw, "directory") or directory
+        gerrit_project = adapter.bst_get(raw, "gerrit_project") or gerrit_project
 
     if ref is None and track is not None:
         ref = track
