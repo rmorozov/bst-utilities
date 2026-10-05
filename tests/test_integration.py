@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -70,7 +71,7 @@ def test_local_project_fetch_find_and_cache(tmp_path):
         assert result.returncode == 0, result.stderr
         assert [json.loads(line)["path"] for line in result.stdout.splitlines()] == ["hello.txt"]
         if attempt == 1:
-            assert "Path-cache hits: 1" in result.stderr
+            assert re.search(r"path cache hits:\s+1\b", result.stderr), result.stderr
     missing = search("test.bst", "--find", "*.missing", "--no-path-cache")
     assert missing.returncode == 1, missing.stderr
     empty = search("empty.bst", "--find", "*")
