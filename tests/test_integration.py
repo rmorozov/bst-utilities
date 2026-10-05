@@ -44,6 +44,7 @@ def test_local_project_fetch_find_and_cache(tmp_path):
 
     uncached = search("test.bst", "--find", "*.txt")
     assert uncached.returncode == 2, uncached.stderr
+    assert "source tree is not cached" in uncached.stderr, uncached.stderr
     fetch = subprocess.run(
         ["bst", "--config", str(config), "--no-interactive", "source", "fetch", "test.bst"],
         cwd=project,
