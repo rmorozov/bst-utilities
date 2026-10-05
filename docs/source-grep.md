@@ -116,6 +116,16 @@ peak RSS, results, peak mounts and rg processes. `--json-out FILE` keeps raw run
 Content scenarios are skipped without `/dev/fuse` and `rg`. Each "fresh index" run
 rebuilds the tool's path index; it does not drop OS or BuildStream caches.
 
+`--project DIR --target ELEMENT [--config FILE]` benchmarks an existing project
+whose sources are already fetched instead (find with fresh, warm and no index, a
+rare file name, a no-match full content scan, `-l`, and `-n` fan-out). It never
+fetches. `--allow-partial` accepts exit status 2 when the only cause is uncached or
+unresolved elements, so a partly fetched project still yields numbers; the table
+shows the uncached count. The manual `Benchmark freedesktop-sdk` workflow
+(`.github/workflows/bench-fdsdk.yml`) fetches a pinned freedesktop-sdk on a GitHub
+runner and runs this mode; it also runs on pull requests that change it or the
+benchmark script.
+
 On 300 unique three-file trees (BuildStream 2.8.0, 4 CPUs), scoped mounts with
 backoff polling took the content search from 20.0 s (15.4 s of it mounting) to
 5.1 s, with one live mount instead of 300.

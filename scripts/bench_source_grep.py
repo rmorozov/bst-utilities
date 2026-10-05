@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Benchmark bst-source-grep against generated, offline BuildStream fixtures.
+"""Benchmark bst-source-grep against generated fixtures or an existing project.
 
-Everything (project, BuildStream cache, path indexes, mounts) lives in a temporary
-work directory that is removed afterwards unless --keep-workdir is given. Each
-scenario is repeated and reported as a distribution, never a single best time.
-"Fresh index" means a newly built tool path index, not a cold OS page cache.
+By default everything (project, BuildStream cache, path indexes, mounts) lives in
+a temporary work directory that is removed afterwards unless --keep-workdir is
+given. With --project the benchmark searches an existing, already fetched project
+(for example freedesktop-sdk) through --config; it never fetches or tracks it.
+Each scenario is repeated and reported as a distribution, never a single best
+time. "Fresh index" means a newly built tool path index, not a cold OS page cache.
 """
 
 from __future__ import annotations
@@ -42,6 +44,23 @@ SCENARIOS = [
     ("content-duplicate-trees", "dup-trees.bst", ["needle"], True, "none"),
     ("output-fanout", "small-files.bst", ["-n", "line"], True, "none"),
 ]
+
+# Scenarios for --project; None stands for --target. The content pattern of
+# content-no-match is absent from real sources, so it measures a full scan.
+EXTERNAL_SCENARIOS = [
+    ("find-fresh-index", None, ["--find", "*.c"], False, "fresh"),
+    ("find-warm-index", None, ["--find", "*.c"], False, "warm"),
+    ("find-no-index", None, ["--find", "*.c"], False, "none"),
+    ("find-rare-name", None, ["--find", "meson.build"], False, "warm"),
+    ("content-no-match", None, ["-F", "bst-source-grep-bench-absent-string"], True, "none"),
+    ("content-files-with-matches", None, ["-l", "-F", "Copyright"], True, "none"),
+    ("output-fanout", None, ["-n", "-F", "#include", "--glob", "*.c"], True, "none"),
+]
+
+# Exit status 2 with only these reasons is a partial search over a partly
+# fetched project, which --allow-partial accepts.
+PARTIAL_ONLY = ("uncached elements", "unresolved elements")
+HARD_ERRORS = ("mount errors", "traversal errors", "search errors")
 
 METRICS = [
     ("wall", "wall s"),
@@ -185,6 +204,17 @@ def run_once(base_cmd, args, cwd) -> dict:
     return record
 
 
+def acceptable(run, allow_partial) -> bool:
+    if run["returncode"] in (0, 1):
+        return True
+    return (
+        allow_partial
+        and run["returncode"] == 2
+        and any(run.get(key, 0) > 0 for key in PARTIAL_ONLY)
+        and not any(run.get(key, 0) > 0 for key in HARD_ERRORS)
+    )
+
+
 def summarize(values):
     values = [v for v in values if v is not None]
     if not values:
@@ -203,34 +233,54 @@ def main() -> int:
     parser.add_argument("--scenario", action="append", help="run only these scenarios")
     parser.add_argument("--json-out", type=Path, help="write raw results as JSON")
     parser.add_argument("--keep-workdir", action="store_true")
+    parser.add_argument("--project", type=Path, help="benchmark this fetched project instead")
+    parser.add_argument("--target", help="element to search with --project")
+    parser.add_argument("--config", type=Path, help="BuildStream configuration for --project")
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="accept partial searches caused only by uncached or unresolved elements",
+    )
     args = parser.parse_args()
 
     if shutil.which("bst") is None:
         parser.exit(2, "error: the BuildStream CLI (bst) is required\n")
-    selected = [s for s in SCENARIOS if not args.scenario or s[0] in args.scenario]
+    if (args.project is None) != (args.target is None):
+        parser.error("--project and --target must be given together")
+    if args.config and not args.project:
+        parser.error("--config requires --project")
+    catalogue = EXTERNAL_SCENARIOS if args.project else SCENARIOS
+    selected = [s for s in catalogue if not args.scenario or s[0] in args.scenario]
 
     workdir = Path(tempfile.mkdtemp(prefix="bst-source-grep-bench-"))
     try:
-        project = workdir / "project"
-        dims = make_fixture(project, SCALES[args.scale])
-        config = workdir / "buildstream.conf"
-        config.write_text(f"cachedir: {workdir / 'bst-cache'}\n", encoding="utf-8")
-        fetch = subprocess.run(
-            ["bst", "--config", str(config), "--no-interactive", "source", "fetch"]
-            + ["--deps", "all", "all.bst"],
-            cwd=project,
-            capture_output=True,
-            text=True,
-        )
-        if fetch.returncode != 0:
-            parser.exit(2, f"error: fixture fetch failed:\n{fetch.stderr[-2000:]}")
+        if args.project:
+            project = args.project.resolve()
+            dims = {"project": str(project), "target": args.target}
+            config = args.config.resolve() if args.config else None
+        else:
+            project = workdir / "project"
+            dims = make_fixture(project, SCALES[args.scale])
+            config = workdir / "buildstream.conf"
+            config.write_text(f"cachedir: {workdir / 'bst-cache'}\n", encoding="utf-8")
+            fetch = subprocess.run(
+                ["bst", "--config", str(config), "--no-interactive", "source", "fetch"]
+                + ["--deps", "all", "all.bst"],
+                cwd=project,
+                capture_output=True,
+                text=True,
+            )
+            if fetch.returncode != 0:
+                parser.exit(2, f"error: fixture fetch failed:\n{fetch.stderr[-2000:]}")
 
         src = Path(__file__).resolve().parents[1] / "src"
         sys.path.insert(0, str(src))
         from bst_utilities import source_grep
 
         buildbox_fuse = source_grep.find_buildbox_fuse(argparse.Namespace(buildbox_fuse=None))
-        base_cmd = [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+        base_cmd = [sys.executable, "-m", "bst_utilities.source_grep"]
+        if config:
+            base_cmd += ["--config", str(config)]
         base_cmd += ["--mount-dir", str(workdir / "mounts")]
         os.environ["PYTHONPATH"] = os.pathsep.join(
             [str(src)] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
@@ -239,6 +289,7 @@ def main() -> int:
 
         results = []
         for name, target, extra, needs_fuse, index in selected:
+            target = target or args.target
             entry = {"scenario": name, "target": target, "args": extra, "runs": []}
             results.append(entry)
             if needs_fuse and not has_fuse:
@@ -255,11 +306,13 @@ def main() -> int:
                     if index == "fresh":
                         shutil.rmtree(index_dir, ignore_errors=True)
                     cmd += ["--path-cache-dir", str(index_dir)]
-                entry["runs"].append(run_once(base_cmd, cmd, project))
+                run = run_once(base_cmd, cmd, project)
+                entry["runs"].append(run)
+                print(f"{name}: rc {run['returncode']}, {run['wall']:.2f}s", file=sys.stderr)
 
         report = {
             "environment": environment(buildbox_fuse),
-            "scale": args.scale,
+            "scale": "external" if args.project else args.scale,
             "repeats": args.repeats,
             "fixture": dims,
             "results": results,
@@ -268,10 +321,18 @@ def main() -> int:
             args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print_report(report)
         failed = [
-            r["scenario"] for r in results for run in r["runs"] if run["returncode"] not in (0, 1)
+            r["scenario"]
+            for r in results
+            for run in r["runs"]
+            if not acceptable(run, args.allow_partial)
         ]
         if failed:
             print(f"\nerror: failing scenarios: {', '.join(sorted(set(failed)))}", file=sys.stderr)
+            for r in results:
+                for run in r["runs"]:
+                    if "stderr" in run and r["scenario"] in failed:
+                        print(f"--- {r['scenario']}:\n{run['stderr']}", file=sys.stderr)
+                        break
             return 2
         return 0
     finally:
@@ -289,7 +350,15 @@ def print_report(report) -> None:
     print(f"- scale: {report['scale']}, repeats: {report['repeats']}")
     print(f"- fixture: {json.dumps(report['fixture'])}\n")
     print("Values are median (min-max) over repeats.\n")
-    header = ["scenario", *(label for _, label in METRICS), "results", "peak mounts", "rg procs"]
+    counts = [
+        ("elements", "elements"),
+        ("uncached elements", "uncached"),
+        ("unique trees", "trees"),
+        ("results", "results"),
+        ("peak mounts", "peak mounts"),
+        ("rg processes", "rg procs"),
+    ]
+    header = ["scenario", *(label for _, label in METRICS), *(label for _, label in counts)]
     print("| " + " | ".join(header) + " |")
     print("|" + " --- |" * len(header))
     for entry in report["results"]:
@@ -305,7 +374,7 @@ def print_report(report) -> None:
                 else f"{summary['median']:.3f} ({summary['min']:.3f}-{summary['max']:.3f})"
             )
         last = entry["runs"][-1] if entry["runs"] else {}
-        for key in ("results", "peak mounts", "rg processes"):
+        for key, _ in counts:
             value = last.get(key)
             cells.append("-" if value is None else str(int(value)))
         print("| " + " | ".join(cells) + " |")
