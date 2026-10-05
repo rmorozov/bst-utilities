@@ -139,8 +139,8 @@ fetches. `--allow-partial` accepts exit status 2 when the only cause is uncached
 unresolved elements, so a partly fetched project still yields numbers; the table
 shows the uncached count. The manual `Benchmark freedesktop-sdk` workflow
 (`.github/workflows/bench-fdsdk.yml`) fetches a pinned freedesktop-sdk on a GitHub
-runner and runs this mode; it also runs on pull requests that change it or the
-benchmark script.
+runner and runs this mode. It runs only when started by hand (Actions tab or
+API, on any branch), because a run takes about 45 minutes.
 
 On 300 unique three-file trees (BuildStream 2.8.0, 4 CPUs), scoped mounts with
 backoff polling took the content search from 20.0 s (15.4 s of it mounting) to
