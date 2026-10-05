@@ -10,10 +10,15 @@ Read README.md and the affected tool's document in docs/ before changing behavio
 - `pyproject.toml`: command entry points, dependency extras, validation settings.
 - `tests/`: regression tests and isolated integration fixtures.
 - `docs/`: per-tool contracts, design notes, review findings and roadmap.
+- `docs/tasks/registry.json`: canonical cross-tool task registry; see its README.
+- `scripts/tasks.py`: registry validation and Markdown generation.
 
 ## Agent work loop
 
-1. Read the issue/request and relevant code. Identify the observable problem and
+1. Read the issue/request, relevant code and task registry. Reuse a matching task
+   ID or add a scoped task before substantial new work; check dependencies.
+   Move a claimed task to in_progress, then in_review with PR/check evidence.
+   Mark done only when delivered/merged and acceptance criteria are met. Identify the observable problem and
    acceptance criteria; record material assumptions in the PR.
 2. Use a focused branch. For behavior fixes, reproduce the failure and add a
    regression test that checks behavior. For a new tool, add its CLI contract,
@@ -25,6 +30,8 @@ Read README.md and the affected tool's document in docs/ before changing behavio
 5. Open/update a PR with the problem, resulting behavior, validation and remaining
    limitations. Inspect CI and review comments; fix actionable findings, rerun
    affected checks, and update the description to match the final implementation.
+   Update registry evidence/status and run `python scripts/tasks.py render` before
+   committing registry changes. Keep the generated index current.
 6. Merge only when the user has authorized merging and required checks pass.
    Do not silently change branch protection, bypass failures or enable auto-merge.
 
@@ -40,6 +47,7 @@ ruff format --check .
 pytest -ra
 python -m build
 bst-source-grep --help
+python scripts/tasks.py check
 ```
 
 ## BuildStream and process constraints

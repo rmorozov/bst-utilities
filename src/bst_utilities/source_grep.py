@@ -2165,7 +2165,10 @@ def create_project(Project, context, args, fetch_subprojects=None):
     if callback is None:
         raise RuntimeError("No BuildStream subproject fetch callback is available")
     return Project(
-        args.directory, context, cli_options=dict(args.option), fetch_subprojects=callback
+        args.directory,
+        context,
+        cli_options=list(dict(args.option).items()),
+        fetch_subprojects=callback,
     )
 
 

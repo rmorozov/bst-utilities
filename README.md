@@ -44,6 +44,14 @@ bst-source-grep default_elements.bst --find '*.h' --exclude 'vendor/**' --json -
 Source tracking is optional when you want to update refs; this helper never
 tracks or fetches element sources. Missing caches produce exit status 2.
 
+## Planned improvements
+
+[The task registry](docs/tasks/README.md) tracks review fixes and the next work
+for all tools. The first follow-ups are performance baselines, a narrow BuildStream
+adapter, a clear glob contract, and bounded mount lifetimes. Each task has
+acceptance criteria, dependencies and evidence; the generated
+[index](docs/tasks/INDEX.md) is checked in CI.
+
 ## Development and agent workflow
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Changes follow

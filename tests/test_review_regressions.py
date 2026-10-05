@@ -36,7 +36,7 @@ def test_project_options_and_directory_forwarded(tmp_path):
     )
     sg.create_project(project, object(), args)
     assert captured["directory"] == str(tmp_path)
-    assert captured["cli_options"] == {"arch": "x86_64"}
+    assert captured["cli_options"] == [("arch", "x86_64")]
 
 
 def test_unresolved_sources_do_not_query_cache():
