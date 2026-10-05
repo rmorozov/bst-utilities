@@ -74,6 +74,8 @@ METRICS = [
     ("wall", "wall s"),
     ("startup", "startup s"),
     ("load time", "load s"),
+    ("project load time", "project load s"),
+    ("cache check time", "cache check s"),
     ("mount time", "mount s"),
     ("search time", "search s"),
     ("cleanup time", "cleanup s"),

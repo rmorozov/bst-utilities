@@ -2524,6 +2524,12 @@ def print_stats(stats: dict) -> None:
     print(f"  peak rss:             {stats['peak_rss_mib']:.1f} MiB", file=sys.stderr)
 
     print(f"  load time:            {format_seconds(stats['load_seconds'])}", file=sys.stderr)
+    # Parts of load time: project/element loading, then concurrent tree checks.
+    project_load = format_seconds(stats["project_load_seconds"])
+    print(f"  project load time:    {project_load}", file=sys.stderr)
+    print(f"  cache checks:         {stats['cache_checks']}", file=sys.stderr)
+    cache_check = format_seconds(stats["cache_check_seconds"])
+    print(f"  cache check time:     {cache_check}", file=sys.stderr)
     print(f"  mount time:           {format_seconds(stats['mount_seconds'])}", file=sys.stderr)
     print(f"  search time:          {format_seconds(stats['search_seconds'])}", file=sys.stderr)
     print(f"  cleanup time:         {format_seconds(stats['cleanup_seconds'])}", file=sys.stderr)
@@ -2619,6 +2625,9 @@ def _main() -> int:
         "path_cache_misses": 0,
         "results": 0,
         "load_seconds": 0.0,
+        "project_load_seconds": 0.0,
+        "cache_check_seconds": 0.0,
+        "cache_checks": 0,
         "mount_seconds": 0.0,
         "search_seconds": 0.0,
         "cleanup_seconds": 0.0,
@@ -2685,9 +2694,12 @@ def _main() -> int:
                 stream.set_project(project)
 
                 elements = call_load_selection(stream, args.target, selection)
-                prefetch_source_cache_state(
+                stats["project_load_seconds"] = time.monotonic() - load_start
+                phase_start = time.monotonic()
+                stats["cache_checks"] = prefetch_source_cache_state(
                     elements, ctx, min(CACHE_CHECK_WORKERS, 2 * (os.cpu_count() or 1))
                 )
+                stats["cache_check_seconds"] = time.monotonic() - phase_start
 
                 cas_dir = None
 

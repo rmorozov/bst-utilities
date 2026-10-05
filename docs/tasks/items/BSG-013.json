@@ -6,7 +6,7 @@
     "title": "Reduce cold filename traversal and warm-index filtering work",
     "area": "performance",
     "priority": "P1",
-    "status": "in_progress",
+    "status": "done",
     "effort": "M",
     "problem": "Filename traversal without a warm index materializes every visited subdirectory as a BuildStream CasBasedDirectory object (_IndexEntry.get_directory caches it) and keeps it alive through the tree record, then stats each listed path from the root again. On freedesktop-sdk sdk.bst (468 trees, 598,531 files) a find without a warm index peaks at 1.64 GiB RSS with 35-39 s of traversal; a warm JSONL index needs 118 MiB and 7 s.",
     "proposal": "Walk Directory protos from the local CAS directly with an explicit stack, yielding regular files in the current order (sorted files, then sorted subdirectories) without retaining BuildStream objects or re-resolving paths; release each tree once traversed. Then profile warm-index filtering and evaluate safe directory pruning for narrow include prefixes. Never publish a query-filtered index as a complete tree index.",
@@ -23,7 +23,8 @@
     "evidence": [
       "freedesktop-sdk sdk.bst benchmark: https://github.com/rmorozov/bst-utilities/actions/runs/37339516274",
       "Dropping the tree's directory after traversal alone cut components/patch.bst peak RSS 318 -> 178 MiB locally; the rest is the largest single tree's cached objects.",
-      "Branch claude/project-thread-ytzju7, PR #6: iter_cas_files walks Directory protos; components/patch.bst (67 trees) no-index find 4.48 -> 0.86 s, peak RSS 318 -> 74 MiB, output byte-identical including --origin; tests/test_source_grep.py::test_direct_cas_walk_matches_buildstream_listing."
+      "Branch claude/project-thread-ytzju7, PR #6: iter_cas_files walks Directory protos; components/patch.bst (67 trees) no-index find 4.48 -> 0.86 s, peak RSS 318 -> 74 MiB, output byte-identical including --origin; tests/test_source_grep.py::test_direct_cas_walk_matches_buildstream_listing.",
+      "freedesktop-sdk sdk.bst after the change (https://github.com/rmorozov/bst-utilities/actions/runs/37349192598): find without index 63.1 -> 28.3 s and 1.64 GiB -> 120 MiB peak RSS; fresh index 67.6 -> 30.8 s, 121 MiB; same 598,531 results. Directory pruning for narrow prefixes and warm-index filtering remain open ideas, not needed for the measured cost."
     ]
   }
 }
