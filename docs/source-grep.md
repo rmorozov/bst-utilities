@@ -153,3 +153,9 @@ medians were: find with a warm index 32 s (24 s of it project load), without one
 
 See [the task registry](tasks/README.md) for prioritized next steps, including
 benchmarking, module boundaries, bounded mounts and improved diagnostics.
+
+## Implementation layout
+
+See [the development guide](source-grep-development.md) for module boundaries,
+resource ownership and validation. The public command and module entry point
+remain unchanged.

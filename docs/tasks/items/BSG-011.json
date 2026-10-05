@@ -16,6 +16,8 @@
       "Unexpected API failures produce a clear unsupported-version/shape diagnostic rather than a silent fallback."
     ],
     "depends_on": [],
-    "evidence": []
+    "evidence": [
+      "BSG-025 extracts tool-local API/cache/backend modules without changing compatibility behavior. Typed records and stricter unsupported-shape diagnostics remain open in BSG-011."
+    ]
   }
 }

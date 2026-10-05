@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-025",
+    "tool": "bst-source-grep",
+    "title": "Split source-grep implementation into focused tool-local modules",
+    "area": "maintainability",
+    "priority": "P1",
+    "status": "done",
+    "effort": "M",
+    "problem": "The PR #6 source_grep.py module combines roughly 3,260 lines of CLI, private APIs, cache traversal, origins, output, mounts and concurrent searches.",
+    "proposal": "Extract cohesive tool-local modules and backend orchestration, keep the public command/module entry point, document ownership and move tests to the owning module boundaries.",
+    "acceptance": [
+      "Console and python -m entry points keep their CLI and exit-status contracts; help works without BuildStream installed.",
+      "Both search backends preserve result ordering, output formats, partial errors, cache format and cleanup behavior.",
+      "Existing regression and supported-version integration suites still pass; add focused cross-module contract coverage.",
+      "Document module responsibilities and resource ownership; avoid circular application/backend imports."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "Branch refactor/source-grep-modules, based on PR #6 head 12d883f130eb3f62e69976581f8819cbe11b6c5e.",
+      "109 non-integration tests passed locally, including 21 new cross-module contract cases; 71 extracted functions/classes retain identical ASTs after resolving module qualifiers."
+    ]
+  }
+}

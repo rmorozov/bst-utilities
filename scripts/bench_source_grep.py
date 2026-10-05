@@ -288,9 +288,9 @@ def main() -> int:
 
         src = Path(__file__).resolve().parents[1] / "src"
         sys.path.insert(0, str(src))
-        from bst_utilities import source_grep
+        from bst_utilities._source_grep import discovery
 
-        buildbox_fuse = source_grep.find_buildbox_fuse(argparse.Namespace(buildbox_fuse=None))
+        buildbox_fuse = discovery.find_buildbox_fuse(argparse.Namespace(buildbox_fuse=None))
         base_cmd = [sys.executable, "-m", "bst_utilities.source_grep"]
         if config:
             base_cmd += ["--config", str(config)]

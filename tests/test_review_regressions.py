@@ -9,7 +9,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from bst_utilities import source_grep as sg
+from bst_utilities._source_grep import (
+    adapter,
+    cas,
+    cli,
+    mounts,
+    origins,
+    output,
+    ripgrep,
+    source_cache,
+)
 
 
 def test_project_options_and_directory_forwarded(tmp_path):
@@ -19,7 +28,7 @@ def test_project_options_and_directory_forwarded(tmp_path):
         captured.update(directory=directory, **kwargs)
         return object()
 
-    args = sg.build_parser().parse_args(
+    args = cli.build_parser().parse_args(
         [
             "-C",
             str(tmp_path),
@@ -34,7 +43,7 @@ def test_project_options_and_directory_forwarded(tmp_path):
             "*",
         ]
     )
-    sg.create_project(project, object(), args)
+    adapter.create_project(project, object(), args)
     assert captured["directory"] == str(tmp_path)
     assert captured["cli_options"] == [("arch", "x86_64")]
 
@@ -55,7 +64,7 @@ def test_unresolved_sources_do_not_query_cache():
     element = SimpleNamespace(
         _sources=Sources(), _query_source_cache=lambda: pytest.fail("cache query")
     )
-    directory, status, detail = sg.load_source_directory(element)
+    directory, status, detail = source_cache.load_source_directory(element)
     assert directory is None
     assert status == "unresolved"
     assert "source track" in detail
@@ -74,7 +83,7 @@ def test_cas_gitreview_enrichment_never_aborts_search(unavailable):
                 raise OSError("missing metadata blob")
             yield io.BytesIO(b"[gerrit]\nproject=caf\xe9/proj\n")
 
-    cache = sg.CasGitreviewCache(Directory(), "always", False)
+    cache = origins.CasGitreviewCache(Directory(), "always", False)
     result = cache.for_path("hello.txt")
     if unavailable:
         assert result is None
@@ -94,14 +103,14 @@ def test_slash_globs_resolve_against_tree_root(tmp_path, mode):
     argv = ["x.bst", "--find", "*.txt"] if mode == "find" else ["x.bst", "^match$"]
     if mode == "files":
         argv.append("-l")
-    args = sg.build_parser().parse_args([*argv, "--glob", "bdir/**"])
-    assert [r[1] for r in sg.iter_mounted_matches(args, str(tmp_path))] == ["bdir/file.txt"]
-    args = sg.build_parser().parse_args([*argv, "--exclude", "bdir/**"])
-    assert [r[1] for r in sg.iter_mounted_matches(args, str(tmp_path))] == ["adir/file.txt"]
+    args = cli.build_parser().parse_args([*argv, "--glob", "bdir/**"])
+    assert [r[1] for r in ripgrep.iter_mounted_matches(args, str(tmp_path))] == ["bdir/file.txt"]
+    args = cli.build_parser().parse_args([*argv, "--exclude", "bdir/**"])
+    assert [r[1] for r in ripgrep.iter_mounted_matches(args, str(tmp_path))] == ["adir/file.txt"]
 
 
 def test_cleanup_reaps_all_children_even_if_unmount_and_rmdir_fail(tmp_path, monkeypatch, capsys):
-    manager = sg.FuseMountManager("fuse", "cas", str(tmp_path), "SHA256", False, False)
+    manager = mounts.FuseMountManager("fuse", "cas", str(tmp_path), "SHA256", False, False)
     children = []
     for i in range(2):
         path = tmp_path / str(i)
@@ -111,8 +120,8 @@ def test_cleanup_reaps_all_children_even_if_unmount_and_rmdir_fail(tmp_path, mon
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         children.append(proc)
         manager.mounts[str(i)] = (str(path), proc, True)
-    monkeypatch.setattr(sg, "unmount_mountpoint", lambda path: False)
-    monkeypatch.setattr(sg.os.path, "ismount", lambda path: False)
+    monkeypatch.setattr(mounts, "unmount_mountpoint", lambda path: False)
+    monkeypatch.setattr(os.path, "ismount", lambda path: False)
     try:
         manager.cleanup()
         assert all(p.poll() is not None for p in children)
@@ -126,18 +135,18 @@ def test_cleanup_reaps_all_children_even_if_unmount_and_rmdir_fail(tmp_path, mon
 
 
 def test_dedup_does_not_retain_normal_output():
-    dedup = sg.RecordDeduplicator(False)
+    dedup = output.RecordDeduplicator(False)
     for i in range(10000):
         assert not dedup.duplicate("match", "x.bst", "file.txt", i)
     assert dedup.seen is None
-    dedup = sg.RecordDeduplicator(True)
+    dedup = output.RecordDeduplicator(True)
     assert not dedup.duplicate("match", "x.bst", "file.txt", 1)
     assert dedup.duplicate("match", "x.bst", "file.txt", 1)
 
 
 def test_emission_errors_are_not_traversal_errors():
     stats = {"traversal_errors": 0}
-    paths = sg.iter_checked_paths(iter(["a.txt"]), {"digest": "123"}, stats)
+    paths = cas.iter_checked_paths(iter(["a.txt"]), {"digest": "123"}, stats)
     try:
         with pytest.raises(BrokenPipeError):
             for path in paths:
@@ -153,16 +162,16 @@ def test_closed_pipe_is_quiet_and_stops_work(tmp_path):
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     code = """
 import sys
-from bst_utilities import source_grep as sg
+from bst_utilities._source_grep import adapter, application, cas, cli, mounts, origins, output, paths, ripgrep
 def run():
-    out = sg.LineBuffer(limit=1)
+    out = output.LineBuffer(limit=1)
     try:
         for i in range(100000):
             out.emit('match' * 1000)
     finally:
         print('cleanup ran', file=sys.stderr)
-sg._main = run
-raise SystemExit(sg.main())
+application._main = run
+raise SystemExit(application.main())
 """
     proc = subprocess.Popen(
         [sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
