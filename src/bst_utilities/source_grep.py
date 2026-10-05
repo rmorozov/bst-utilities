@@ -1085,15 +1085,17 @@ def iter_mounted_matches(args, mountpoint):
     """Run rg from the tree root so slash globs apply to source-relative paths."""
     files = args.find is not None or args.files_with_matches
     if args.find is not None:
-        cmd = ["rg", "--files", "--null", "--hidden", "--no-ignore", "."]
+        cmd = ["rg", "--files", "--null", "--hidden", "--no-ignore", "--glob", "!**/.git/**", "."]
         matcher = make_path_filter(args)
     else:
-        cmd = ["rg", "--hidden", "--no-ignore", "--glob", "!**/.git/**"]
+        cmd = ["rg", "--hidden", "--no-ignore"]
         cmd.extend(["--files-with-matches", "--null"] if files else ["--json"])
         for pattern in args.glob:
             cmd.extend(["--glob", pattern])
         for pattern in args.exclude:
             cmd.extend(["--glob", pattern if pattern.startswith("!") else f"!{pattern}"])
+        # rg gives later globs precedence; keep the built-in exclusion last.
+        cmd.extend(["--glob", "!**/.git/**"])
         if args.ignore_case:
             cmd.append("--ignore-case")
         if args.fixed_string:

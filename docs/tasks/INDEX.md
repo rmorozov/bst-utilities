@@ -26,6 +26,8 @@ See [registry conventions](README.md) before changing status or priority.
 | BSG-017 | bst-source-grep | Add result limits and predictable pipeline modes | usability | P2 | proposed | M | BSG-012 |
 | BSG-018 | bst-source-grep | Inspect and prune path-index cache safely | usability | P2 | proposed | M | — |
 | BSG-019 | bst-source-grep | Publish concise recipes and output contracts | usability | P2 | ready | S | — |
+| REP-002 | repository | Make the task registry independent of locale encoding | robustness | P2 | in_review | S | — |
+| BSG-020 | bst-source-grep | Prune .git directories during FUSE filename enumeration | performance | P2 | in_review | S | — |
 
 ## BSG-001: Evaluate content globs relative to source roots
 
@@ -186,7 +188,7 @@ Evidence:
 
 ## BSG-010: Measure startup, traversal, search and memory costs
 
-Existing aggregate timings do not identify dominant costs; proposed speedups are hypotheses.
+Existing aggregate timings do not identify dominant costs; proposed speedups are hypotheses. Reviewer-reported baseline (not reproduced here): 300 unique three-file trees, two runs/commit, 900 matches; mounting 15.5 s, search 0.095 s (one rg) versus 1.55 s (per-tree rg), wall 18.5 versus 20.0 s.
 
 Proposed work: Create offline repeatable fixtures and a benchmark command separating fresh index, warm index, narrow glob, broad content and many identical source trees. Record versions, file/tree counts, peak RSS, mount count and process launches. Distinguish a fresh tool index from cold OS/BuildStream caches.
 
@@ -196,6 +198,11 @@ Acceptance:
 - Reports separate startup/load, traversal/index, mounts, rg search and output fan-out.
 - Benchmark writes only temporary caches and records repeat distributions rather than a single best time.
 - Establish baselines before adopting concurrency, SQLite or direct content blob search.
+- Reproduce the reported 300-tree fixture with exact runtime versions and compare serial versus small bounded pools before choosing concurrency.
+
+Evidence:
+
+- https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451
 
 ## BSG-011: Isolate the supported BuildStream compatibility boundary
 
@@ -213,13 +220,18 @@ Acceptance:
 
 All source trees are mounted before searching, although rg now runs sequentially per tree. Peak mounts and resident daemon/process costs grow with unique trees.
 
-Proposed work: Scope each mount/search/cleanup lifecycle to one tree by default; evaluate bounded concurrency only after baseline measurements.
+Proposed work: Prioritize mount lifetimes after BSG-010 reproduces the reviewer baseline. Start with mount/search/cleanup scoped to one tree; compare a configurable small bounded pool, preserving resource ownership and output semantics. Reviewer measurements suggest serial mount startup (~52 ms/tree) dominates rg startup (~5 ms/tree), but pool speedups remain unmeasured.
 
 Acceptance:
 
 - Peak active owned mounts is one in serial mode.
 - All element mappings, origins, partial-error statuses and interruption cleanup are preserved.
 - Measure many-tree latency/RSS and identify any regressions against BSG-010.
+- For any pool, active owned mounts/processes never exceed the configured bound and cancellation/error cleanup covers every worker.
+
+Evidence:
+
+- https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451
 
 ## BSG-013: Reduce cold filename traversal and warm-index filtering work
 
@@ -304,3 +316,33 @@ Acceptance:
 - Recipes are exercised against a local fixture.
 - Examples distinguish BuildStream builders/max-jobs from search behavior without adding unrelated knobs.
 - JSON field/nullability and filename/encoding guarantees are explicit.
+
+## REP-002: Make the task registry independent of locale encoding
+
+Registry index Unicode fails under an ASCII locale.
+
+Proposed work: Use explicit UTF-8 reads/writes and test check/render with UTF-8 mode and locale coercion disabled.
+
+Acceptance:
+
+- check/render/check succeeds with LC_ALL=C, PYTHONUTF8=0 and PYTHONCOERCECLOCALE=0.
+
+Evidence:
+
+- https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184910289
+- https://github.com/rmorozov/bst-utilities/pull/1
+
+## BSG-020: Prune .git directories during FUSE filename enumeration
+
+FUSE find enumerates .git subtrees only to reject their files afterwards.
+
+Proposed work: Pass the same .git exclusion to rg --files as content search, retaining the shared post-filter.
+
+Acceptance:
+
+- Filename and content results exclude root/nested .git files while slash filters still work.
+
+Evidence:
+
+- https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451
+- https://github.com/rmorozov/bst-utilities/pull/1

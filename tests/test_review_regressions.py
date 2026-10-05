@@ -89,6 +89,8 @@ def test_slash_globs_resolve_against_tree_root(tmp_path, mode):
     for dirname in ["adir", "bdir"]:
         (tmp_path / dirname).mkdir()
         (tmp_path / dirname / "file.txt").write_text("match\n")
+    (tmp_path / "bdir" / ".git" / "objects").mkdir(parents=True)
+    (tmp_path / "bdir" / ".git" / "objects" / "hidden.txt").write_text("match\n")
     argv = ["x.bst", "--find", "*.txt"] if mode == "find" else ["x.bst", "^match$"]
     if mode == "files":
         argv.append("-l")

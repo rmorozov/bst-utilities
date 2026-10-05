@@ -128,11 +128,11 @@ def main():
     parser.add_argument("--tool")
     args = parser.parse_args()
     try:
-        data = validate(json.loads(REGISTRY.read_text()))
+        data = validate(json.loads(REGISTRY.read_text(encoding="utf-8")))
         if args.command == "render":
-            INDEX.write_text(render(data))
+            INDEX.write_text(render(data), encoding="utf-8")
         elif args.command == "check":
-            if not INDEX.exists() or INDEX.read_text() != render(data):
+            if not INDEX.exists() or INDEX.read_text(encoding="utf-8") != render(data):
                 raise ValueError("task index is stale; run python scripts/tasks.py render")
             print(f"{len(data['tasks'])} tasks validated; index is current")
         else:

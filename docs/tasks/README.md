@@ -41,12 +41,17 @@ performance claim. Reprioritize after benchmarks or user feedback.
 1. **BSG-010: measure first.** Capture startup, source loading, fresh/warm index,
    many-tree content, output fan-out and peak RSS. Record exact versions and
    fixture dimensions; do not call a fresh tool index a cold filesystem cache.
-2. **BSG-011 and BSG-016: establish boundaries and glob contracts.** The private
-   BuildStream adapter and differential matcher tests reduce regression risk
-   before optimizing backends. Keep the per-tool implementation independent.
-3. **BSG-012: bound mounts.** Mount/search/clean one tree at a time. The current
-   implementation mounts all trees before sequential per-tree searches, so this
-   is a concrete resource-lifecycle opportunity; speed/RSS gains must be measured.
+2. **BSG-012: prioritize bounded mount lifetimes.** The reviewer measured 300
+   distinct three-file source trees (two runs per commit): mount time 15.5 s,
+   per-tree rg search time 1.55 s and total wall time 20.0 s. The measurements
+   were reported in [PR review](https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451),
+   not reproduced here. Reproduce that fixture, then compare serial scoped
+   mount/search/cleanup with a small bounded pool. Concurrency gains remain a
+   hypothesis; active mounts and cancellation cleanup must remain bounded.
+3. **BSG-011 and BSG-016: establish boundaries and glob contracts.** The private
+   BuildStream adapter and differential matcher tests reduce regression risk.
+   These can proceed alongside the benchmark/lifecycle work; preserve CLI and
+   result contracts while optimizing.
 4. Use the results to choose **BSG-013** (traversal/filter/index work) or **BSG-014**
    (byte-bounded output). Avoid adopting parallel workers, SQLite or direct blob
    content search merely because they sound faster.
