@@ -7,7 +7,7 @@
       "title": "Evaluate content globs relative to source roots",
       "area": "correctness",
       "priority": "P1",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Slash-containing rg globs see absolute mount paths and give wrong matches.",
       "proposal": "Run one rg from each mounted tree root; preserve rg pruning and relative output.",
@@ -17,7 +17,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184599764",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -26,7 +27,7 @@
       "title": "Exit quietly when an output consumer closes its pipe",
       "area": "usability",
       "priority": "P1",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Piping output to head can report bogus traversal errors and leak a traceback.",
       "proposal": "Keep emission outside traversal exception handling and return 141 after normal resource cleanup.",
@@ -37,7 +38,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184600850",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -46,7 +48,7 @@
       "title": "Select the same project options and directory as the build",
       "area": "correctness",
       "priority": "P1",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Default project options can select a different cached source tree from the one used by the build.",
       "proposal": "Forward repeatable -o KEY VALUE and -C DIR to Project.",
@@ -57,7 +59,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184601634",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -66,7 +69,7 @@
       "title": "Treat CAS origin enrichment as optional metadata",
       "area": "robustness",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Invalid UTF-8 or unavailable .gitreview metadata can abort otherwise valid searches.",
       "proposal": "Read bytes, decode with replacement and cache enrichment failure as unavailable metadata.",
@@ -77,7 +80,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184602435",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -86,7 +90,7 @@
       "title": "Distinguish unresolved refs from missing caches",
       "area": "usability",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Unresolved cache keys cause a leaked NoneType error and misleading fetch advice.",
       "proposal": "Check source resolution before querying the cache and print track/configure-ref guidance.",
@@ -96,7 +100,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184603116",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -105,7 +110,7 @@
       "title": "Complete every owned mount teardown despite individual failures",
       "area": "robustness",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Unmount/removal failures can skip later mounts, child reaping or stream cleanup.",
       "proposal": "Isolate each teardown, reap each owned child and guarantee stream cleanup.",
@@ -116,7 +121,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184603785",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -125,7 +131,7 @@
       "title": "Stream normal output without retaining every match",
       "area": "performance",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "The dedup set grows with full match output and search_errors stays zero on rg failures.",
       "proposal": "Enable compact dedup keys only for junction stripping; count failed searches per tree.",
@@ -137,7 +143,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184604342",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -146,7 +153,7 @@
       "title": "Document per-mode runtime prerequisites",
       "area": "usability",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Bubblewrap and the CAS daemon are needed even for filename searches.",
       "proposal": "List bwrap/buildbox-casd and the additional FUSE/rg/device/unmount requirements.",
@@ -156,7 +163,8 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184604961",
-        "Implementation and regression coverage in PR #1; mark done after merge."
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -165,7 +173,7 @@
       "title": "Require real FUSE integration in the compatibility matrix",
       "area": "maintainability",
       "priority": "P1",
-      "status": "in_review",
+      "status": "done",
       "effort": "M",
       "problem": "CAS-only CI cannot detect content-root, process and mount lifecycle regressions.",
       "proposal": "Install FUSE prerequisites and require real FUSE checks on minimum and latest supported BuildStream.",
@@ -175,7 +183,9 @@
       ],
       "depends_on": [],
       "evidence": [
-        "https://github.com/rmorozov/bst-utilities/pull/1"
+        "https://github.com/rmorozov/bst-utilities/pull/1",
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -184,7 +194,7 @@
       "title": "Establish a machine-readable task registry",
       "area": "workflow",
       "priority": "P1",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Future tools and agent iterations need durable tasks with acceptance criteria and evidence.",
       "proposal": "Keep a canonical JSON registry, generated Markdown view and stdlib validator in CI.",
@@ -195,7 +205,9 @@
       ],
       "depends_on": [],
       "evidence": [
-        "https://github.com/rmorozov/bst-utilities/pull/1"
+        "https://github.com/rmorozov/bst-utilities/pull/1",
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -401,7 +413,7 @@
       "title": "Make the task registry independent of locale encoding",
       "area": "robustness",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "Registry index Unicode fails under an ASCII locale.",
       "proposal": "Use explicit UTF-8 reads/writes and test check/render with UTF-8 mode and locale coercion disabled.",
@@ -411,7 +423,9 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184910289",
-        "https://github.com/rmorozov/bst-utilities/pull/1"
+        "https://github.com/rmorozov/bst-utilities/pull/1",
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     },
     {
@@ -420,7 +434,7 @@
       "title": "Prune .git directories during FUSE filename enumeration",
       "area": "performance",
       "priority": "P2",
-      "status": "in_review",
+      "status": "done",
       "effort": "S",
       "problem": "FUSE find enumerates .git subtrees only to reject their files afterwards.",
       "proposal": "Pass the same .git exclusion to rg --files as content search, retaining the shared post-filter.",
@@ -430,7 +444,9 @@
       "depends_on": [],
       "evidence": [
         "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451",
-        "https://github.com/rmorozov/bst-utilities/pull/1"
+        "https://github.com/rmorozov/bst-utilities/pull/1",
+        "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+        "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
       ]
     }
   ]

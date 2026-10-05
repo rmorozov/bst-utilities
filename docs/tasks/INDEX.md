@@ -6,16 +6,16 @@ See [registry conventions](README.md) before changing status or priority.
 
 | ID | Tool | Task | Area | Priority | Status | Effort | Depends on |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| BSG-001 | bst-source-grep | Evaluate content globs relative to source roots | correctness | P1 | in_review | S | — |
-| BSG-002 | bst-source-grep | Exit quietly when an output consumer closes its pipe | usability | P1 | in_review | S | — |
-| BSG-003 | bst-source-grep | Select the same project options and directory as the build | correctness | P1 | in_review | S | — |
-| BSG-004 | bst-source-grep | Treat CAS origin enrichment as optional metadata | robustness | P2 | in_review | S | — |
-| BSG-005 | bst-source-grep | Distinguish unresolved refs from missing caches | usability | P2 | in_review | S | — |
-| BSG-006 | bst-source-grep | Complete every owned mount teardown despite individual failures | robustness | P2 | in_review | S | — |
-| BSG-007 | bst-source-grep | Stream normal output without retaining every match | performance | P2 | in_review | S | — |
-| BSG-008 | bst-source-grep | Document per-mode runtime prerequisites | usability | P2 | in_review | S | — |
-| BSG-009 | bst-source-grep | Require real FUSE integration in the compatibility matrix | maintainability | P1 | in_review | M | — |
-| REP-001 | repository | Establish a machine-readable task registry | workflow | P1 | in_review | S | — |
+| BSG-001 | bst-source-grep | Evaluate content globs relative to source roots | correctness | P1 | done | S | — |
+| BSG-002 | bst-source-grep | Exit quietly when an output consumer closes its pipe | usability | P1 | done | S | — |
+| BSG-003 | bst-source-grep | Select the same project options and directory as the build | correctness | P1 | done | S | — |
+| BSG-004 | bst-source-grep | Treat CAS origin enrichment as optional metadata | robustness | P2 | done | S | — |
+| BSG-005 | bst-source-grep | Distinguish unresolved refs from missing caches | usability | P2 | done | S | — |
+| BSG-006 | bst-source-grep | Complete every owned mount teardown despite individual failures | robustness | P2 | done | S | — |
+| BSG-007 | bst-source-grep | Stream normal output without retaining every match | performance | P2 | done | S | — |
+| BSG-008 | bst-source-grep | Document per-mode runtime prerequisites | usability | P2 | done | S | — |
+| BSG-009 | bst-source-grep | Require real FUSE integration in the compatibility matrix | maintainability | P1 | done | M | — |
+| REP-001 | repository | Establish a machine-readable task registry | workflow | P1 | done | S | — |
 | BSG-010 | bst-source-grep | Measure startup, traversal, search and memory costs | performance | P1 | ready | M | — |
 | BSG-011 | bst-source-grep | Isolate the supported BuildStream compatibility boundary | maintainability | P1 | ready | M | — |
 | BSG-012 | bst-source-grep | Mount and search one tree at a time | performance | P1 | proposed | M | BSG-009, BSG-010 |
@@ -26,8 +26,8 @@ See [registry conventions](README.md) before changing status or priority.
 | BSG-017 | bst-source-grep | Add result limits and predictable pipeline modes | usability | P2 | proposed | M | BSG-012 |
 | BSG-018 | bst-source-grep | Inspect and prune path-index cache safely | usability | P2 | proposed | M | — |
 | BSG-019 | bst-source-grep | Publish concise recipes and output contracts | usability | P2 | ready | S | — |
-| REP-002 | repository | Make the task registry independent of locale encoding | robustness | P2 | in_review | S | — |
-| BSG-020 | bst-source-grep | Prune .git directories during FUSE filename enumeration | performance | P2 | in_review | S | — |
+| REP-002 | repository | Make the task registry independent of locale encoding | robustness | P2 | done | S | — |
+| BSG-020 | bst-source-grep | Prune .git directories during FUSE filename enumeration | performance | P2 | done | S | — |
 
 ## BSG-001: Evaluate content globs relative to source roots
 
@@ -42,7 +42,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184599764
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-002: Exit quietly when an output consumer closes its pipe
 
@@ -58,7 +59,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184600850
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-003: Select the same project options and directory as the build
 
@@ -74,7 +76,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184601634
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-004: Treat CAS origin enrichment as optional metadata
 
@@ -90,7 +93,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184602435
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-005: Distinguish unresolved refs from missing caches
 
@@ -105,7 +109,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184603116
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-006: Complete every owned mount teardown despite individual failures
 
@@ -121,7 +126,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184603785
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-007: Stream normal output without retaining every match
 
@@ -138,7 +144,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184604342
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-008: Document per-mode runtime prerequisites
 
@@ -153,7 +160,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184604961
-- Implementation and regression coverage in PR #1; mark done after merge.
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-009: Require real FUSE integration in the compatibility matrix
 
@@ -169,6 +177,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## REP-001: Establish a machine-readable task registry
 
@@ -185,6 +195,8 @@ Acceptance:
 Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-010: Measure startup, traversal, search and memory costs
 
@@ -331,6 +343,8 @@ Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184910289
 - https://github.com/rmorozov/bst-utilities/pull/1
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250
 
 ## BSG-020: Prune .git directories during FUSE filename enumeration
 
@@ -346,3 +360,5 @@ Evidence:
 
 - https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451
 - https://github.com/rmorozov/bst-utilities/pull/1
+- Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.
+- https://github.com/rmorozov/bst-utilities/actions/runs/37323000250

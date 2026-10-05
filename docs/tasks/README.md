@@ -29,7 +29,8 @@ cycles and required evidence; `check` also rejects a stale Markdown view.
 
 A ready task is actionable only after its dependencies are done. Status changes
 are explicit; the validator does not infer completion from GitHub automatically.
-Do not mark the review fixes done until PR #1 has merged.
+Bootstrap and review fixes are delivered in merged PR #1. Future implementation
+tasks remain open; mark them done only after their delivery is confirmed.
 
 P1 means address before expansion or optimize a likely significant bottleneck;
 P2 means a useful follow-up; P3 means optional. S/M/L are relative effort estimates,
