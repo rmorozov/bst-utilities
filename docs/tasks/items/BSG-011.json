@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-011",
+    "tool": "bst-source-grep",
+    "title": "Isolate the supported BuildStream compatibility boundary",
+    "area": "maintainability",
+    "priority": "P1",
+    "status": "ready",
+    "effort": "M",
+    "problem": "A large CLI module mixes private API access, binary discovery, matching, origins and process cleanup; broad introspection hides unsupported shapes.",
+    "proposal": "First extract a narrow BuildStream adapter and typed element/tree records, then backend/output boundaries only where tests justify them. Keep the CLI stable and helpers tool-local until another tool needs them.",
+    "acceptance": [
+      "Private API calls are concentrated behind the adapter.",
+      "Minimum/latest compatibility tests and CLI/output contracts remain unchanged.",
+      "Unexpected API failures produce a clear unsupported-version/shape diagnostic rather than a silent fallback."
+    ],
+    "depends_on": [],
+    "evidence": []
+  }
+}

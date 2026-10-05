@@ -12,5 +12,12 @@ The BuildStream integration matrix checks 2.8.0 and the newest available 2.x;
 keep fixtures local and caches isolated.
 
 Use [the task registry](docs/tasks/README.md) to claim work, track dependencies,
-and record acceptance evidence. Update `registry.json` and regenerate its index
-with `python scripts/tasks.py render`; CI validates the registry and rendered view.
+and record acceptance evidence. Edit only the relevant `docs/tasks/items/<ID>.json`
+files; run `python scripts/tasks.py check`. Mark tasks done in the implementation
+PR after acceptance checks pass; merge delivers that status without a follow-up
+PR. Generated reports are optional and are not committed. See
+[task conventions](docs/tasks/README.md) for concurrent work.
+
+Documentation-only PRs run lightweight task validation and focused tooling tests.
+Code, dependencies, scripts, tests and workflow changes run the full test matrices.
+Manual CI runs always run the full suite; `CI result` reports the selected result.

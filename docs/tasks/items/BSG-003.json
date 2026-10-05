@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-003",
+    "tool": "bst-source-grep",
+    "title": "Select the same project options and directory as the build",
+    "area": "correctness",
+    "priority": "P1",
+    "status": "done",
+    "effort": "S",
+    "problem": "Default project options can select a different cached source tree from the one used by the build.",
+    "proposal": "Forward repeatable -o KEY VALUE and -C DIR to Project.",
+    "acceptance": [
+      "Both conditional source variants are selected correctly by the real CLI fixture.",
+      "Repeated option keys use the last value."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184601634",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

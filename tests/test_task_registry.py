@@ -16,12 +16,13 @@ spec.loader.exec_module(tasks)
 
 
 def registry():
-    return json.loads(tasks.REGISTRY.read_text(encoding="utf-8"))
+    return tasks.load()
 
 
-def test_registry_and_generated_index_are_valid():
+def test_registry_and_report_are_valid():
     data = tasks.validate(registry())
-    assert tasks.INDEX.read_text(encoding="utf-8") == tasks.render(data)
+    assert "BSG-010" in tasks.render(data)
+    assert len(data["tasks"]) == len(list(tasks.TASK_DIR.glob("*.json")))
 
 
 @pytest.mark.parametrize(
@@ -61,8 +62,7 @@ def test_registry_check_and_render_under_ascii_locale(tmp_path):
     (tmp_path / "docs" / "tasks").mkdir(parents=True)
     script = tmp_path / "scripts" / "tasks.py"
     shutil.copyfile(ROOT / "scripts" / "tasks.py", script)
-    for source in [tasks.REGISTRY, tasks.INDEX]:
-        shutil.copyfile(source, tmp_path / "docs" / "tasks" / source.name)
+    shutil.copytree(tasks.TASK_DIR, tmp_path / "docs" / "tasks" / "items")
     env = dict(os.environ, LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
     for command in ["check", "render", "check"]:
         result = subprocess.run(
@@ -73,6 +73,28 @@ def test_registry_check_and_render_under_ascii_locale(tmp_path):
             encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
-    assert (tmp_path / "docs" / "tasks" / "INDEX.md").read_text(
-        encoding="utf-8"
-    ) == tasks.INDEX.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("failure", ["filename", "schema", "malformed", "empty"])
+def test_invalid_task_files_are_rejected(tmp_path, failure):
+    task = registry()["tasks"][0]
+    data = {"schema_version": 1, "task": task}
+    name = task["id"] if failure != "filename" else "WRONG-001"
+    if failure == "schema":
+        data["schema_version"] = 99
+    if failure != "empty":
+        (tmp_path / f"{name}.json").write_text(
+            "{" if failure == "malformed" else json.dumps(data), encoding="utf-8"
+        )
+    with pytest.raises(ValueError):
+        tasks.load(tmp_path)
+
+
+def test_independent_tasks_can_be_added_without_shared_index(tmp_path):
+    for task_id in ["NEW-001", "NEW-002"]:
+        task = copy.deepcopy(registry()["tasks"][0])
+        task.update(id=task_id, depends_on=[])
+        (tmp_path / f"{task_id}.json").write_text(
+            json.dumps({"schema_version": 1, "task": task}), encoding="utf-8"
+        )
+    assert [t["id"] for t in tasks.load(tmp_path)["tasks"]] == ["NEW-001", "NEW-002"]

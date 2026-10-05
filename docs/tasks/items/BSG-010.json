@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-010",
+    "tool": "bst-source-grep",
+    "title": "Measure startup, traversal, search and memory costs",
+    "area": "performance",
+    "priority": "P1",
+    "status": "ready",
+    "effort": "M",
+    "problem": "Existing aggregate timings do not identify dominant costs; proposed speedups are hypotheses. Reviewer-reported baseline (not reproduced here): 300 unique three-file trees, two runs/commit, 900 matches; mounting 15.5 s, search 0.095 s (one rg) versus 1.55 s (per-tree rg), wall 18.5 versus 20.0 s.",
+    "proposal": "Create offline repeatable fixtures and a benchmark command separating fresh index, warm index, narrow glob, broad content and many identical source trees. Record versions, file/tree counts, peak RSS, mount count and process launches. Distinguish a fresh tool index from cold OS/BuildStream caches.",
+    "acceptance": [
+      "Fixtures include many small files, few large files, many unique trees and duplicate trees.",
+      "Reports separate startup/load, traversal/index, mounts, rg search and output fan-out.",
+      "Benchmark writes only temporary caches and records repeat distributions rather than a single best time.",
+      "Establish baselines before adopting concurrency, SQLite or direct content blob search.",
+      "Reproduce the reported 300-tree fixture with exact runtime versions and compare serial versus small bounded pools before choosing concurrency.",
+      "Separate readiness-poll waiting from actual FUSE startup; ensure_mount currently polls every 50 ms, close to the reported 52 ms per tree."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-014",
+    "tool": "bst-source-grep",
+    "title": "Bound output buffering by bytes",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "LineBuffer limits record count, so a small number of very long lines can still consume substantial memory.",
+    "proposal": "Use a byte-aware buffer threshold and preserve streaming/backpressure behavior; document what rg itself buffers for long lines.",
+    "acceptance": [
+      "Short/long-line workloads preserve JSON and text output.",
+      "Buffered memory has a documented bound except a single already-materialized match.",
+      "Closed-pipe and interruption tests still pass."
+    ],
+    "depends_on": [
+      "BSG-010"
+    ],
+    "evidence": []
+  }
+}

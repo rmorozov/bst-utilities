@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Validate the canonical task registry and render its reviewable Markdown view."""
+"""Validate task files and print an optional Markdown report to stdout."""
 
 import argparse
 import json
+import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REGISTRY = ROOT / "docs/tasks/registry.json"
-INDEX = ROOT / "docs/tasks/INDEX.md"
+TASK_DIR = ROOT / "docs/tasks/items"
 STATUSES = {"proposed", "ready", "in_progress", "in_review", "blocked", "done", "dropped"}
 FIELDS = {
     "id",
@@ -23,6 +24,24 @@ FIELDS = {
     "depends_on",
     "evidence",
 }
+
+
+def load(directory=TASK_DIR):
+    tasks = []
+    paths = sorted(directory.glob("*.json"))
+    if not paths:
+        raise ValueError("no task files found")
+    for path in paths:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or set(data) != {"schema_version", "task"}:
+            raise ValueError(f"{path.name}: expected schema_version and task")
+        if data["schema_version"] != 1 or not isinstance(data["task"], dict):
+            raise ValueError(f"{path.name}: invalid task schema")
+        task = data["task"]
+        if task.get("id") != path.stem or not re.fullmatch(r"[A-Z]+-[0-9]{3,}", path.stem):
+            raise ValueError(f"{path.name}: filename must match a stable task ID")
+        tasks.append(task)
+    return validate({"schema_version": 1, "tasks": tasks})
 
 
 def validate(data):
@@ -81,9 +100,9 @@ def render(data):
     lines = [
         "# Task index",
         "",
-        "Generated from `registry.json` by `python scripts/tasks.py render`.",
+        "Generated from individual task files by `python scripts/tasks.py render`.",
         "",
-        "See [registry conventions](README.md) before changing status or priority.",
+        "See docs/tasks/README.md before changing status or priority.",
         "",
         "| ID | Tool | Task | Area | Priority | Status | Effort | Depends on |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -128,13 +147,11 @@ def main():
     parser.add_argument("--tool")
     args = parser.parse_args()
     try:
-        data = validate(json.loads(REGISTRY.read_text(encoding="utf-8")))
+        data = load()
         if args.command == "render":
-            INDEX.write_text(render(data), encoding="utf-8")
+            sys.stdout.buffer.write(render(data).encode("utf-8"))
         elif args.command == "check":
-            if not INDEX.exists() or INDEX.read_text(encoding="utf-8") != render(data):
-                raise ValueError("task index is stale; run python scripts/tasks.py render")
-            print(f"{len(data['tasks'])} tasks validated; index is current")
+            print(f"{len(data['tasks'])} task files validated")
         else:
             for task in data["tasks"]:
                 if (args.status is None or task["status"] == args.status) and (

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "REP-001",
+    "tool": "repository",
+    "title": "Establish a machine-readable task registry",
+    "area": "workflow",
+    "priority": "P1",
+    "status": "done",
+    "effort": "S",
+    "problem": "Future tools and agent iterations need durable tasks with acceptance criteria and evidence.",
+    "proposal": "Keep a canonical JSON registry, generated Markdown view and stdlib validator in CI.",
+    "acceptance": [
+      "Duplicate IDs, invalid fields, missing dependencies and dependency cycles are rejected.",
+      "CI rejects a stale Markdown index.",
+      "Agent instructions define status transitions and evidence requirements."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

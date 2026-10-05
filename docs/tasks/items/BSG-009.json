@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-009",
+    "tool": "bst-source-grep",
+    "title": "Require real FUSE integration in the compatibility matrix",
+    "area": "maintainability",
+    "priority": "P1",
+    "status": "done",
+    "effort": "M",
+    "problem": "CAS-only CI cannot detect content-root, process and mount lifecycle regressions.",
+    "proposal": "Install FUSE prerequisites and require real FUSE checks on minimum and latest supported BuildStream.",
+    "acceptance": [
+      "CI fails when FUSE prerequisites are unavailable instead of silently skipping.",
+      "Minimum and latest 2.x validate slash filters, error counters and closed-pipe cleanup."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

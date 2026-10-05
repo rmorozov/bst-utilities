@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-002",
+    "tool": "bst-source-grep",
+    "title": "Exit quietly when an output consumer closes its pipe",
+    "area": "usability",
+    "priority": "P1",
+    "status": "done",
+    "effort": "S",
+    "problem": "Piping output to head can report bogus traversal errors and leak a traceback.",
+    "proposal": "Keep emission outside traversal exception handling and return 141 after normal resource cleanup.",
+    "acceptance": [
+      "Closed content pipe produces no diagnostics and leaves no mounts.",
+      "A child-process test verifies quiet stdout shutdown; traversal counters exclude emission errors."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184600850",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

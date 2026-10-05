@@ -49,8 +49,11 @@ tracks or fetches element sources. Missing caches produce exit status 2.
 [The task registry](docs/tasks/README.md) tracks review fixes and the next work
 for all tools. The first follow-ups are performance baselines, a narrow BuildStream
 adapter, a clear glob contract, and bounded mount lifetimes. Each task has
-acceptance criteria, dependencies and evidence; the generated
-[index](docs/tasks/INDEX.md) is checked in CI.
+acceptance criteria, dependencies and evidence. The
+[task files](docs/tasks/items/) are validated in CI; generate a report with
+`python scripts/tasks.py render`. Task completion travels with its implementation
+PR, with no post-merge bookkeeping PR. Documentation-only changes use lightweight
+CI; code and workflow changes retain the full validation matrices.
 
 ## Development and agent workflow
 

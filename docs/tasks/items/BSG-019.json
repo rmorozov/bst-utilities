@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-019",
+    "tool": "bst-source-grep",
+    "title": "Publish concise recipes and output contracts",
+    "area": "usability",
+    "priority": "P2",
+    "status": "ready",
+    "effort": "S",
+    "problem": "Many flags make common grep/find tasks hard to discover, and text output is ambiguous for unusual filenames.",
+    "proposal": "Document copy-paste recipes for project variants, C/C++ searches, filename search, rg-like statuses, JSON piping and origin inspection; publish a versioned JSON Lines contract.",
+    "acceptance": [
+      "Recipes are exercised against a local fixture.",
+      "Examples distinguish BuildStream builders/max-jobs from search behavior without adding unrelated knobs.",
+      "JSON field/nullability and filename/encoding guarantees are explicit."
+    ],
+    "depends_on": [],
+    "evidence": []
+  }
+}

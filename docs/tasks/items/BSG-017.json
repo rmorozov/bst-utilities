@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-017",
+    "tool": "bst-source-grep",
+    "title": "Add result limits and predictable pipeline modes",
+    "area": "usability",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Users pipe to head for the first useful result, but loading/mounting and scanning may continue until pipe backpressure is observed.",
+    "proposal": "Design global --max-results and quiet mode, with an explicit definition of emitted versus unique results and partial-cache behavior; evaluate line-buffered output for interactive use.",
+    "acceptance": [
+      "Limits stop further scanning/mounting and reap active processes.",
+      "No partial path index is published after early termination.",
+      "Exit status, per-element fan-out and broken-pipe behavior are documented."
+    ],
+    "depends_on": [
+      "BSG-012"
+    ],
+    "evidence": []
+  }
+}

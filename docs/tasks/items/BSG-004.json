@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-004",
+    "tool": "bst-source-grep",
+    "title": "Treat CAS origin enrichment as optional metadata",
+    "area": "robustness",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Invalid UTF-8 or unavailable .gitreview metadata can abort otherwise valid searches.",
+    "proposal": "Read bytes, decode with replacement and cache enrichment failure as unavailable metadata.",
+    "acceptance": [
+      "Invalid UTF-8 metadata does not affect exit status or file matches.",
+      "Unavailable metadata is tested without suppressing actual file traversal failures."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184602435",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

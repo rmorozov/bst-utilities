@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-013",
+    "tool": "bst-source-grep",
+    "title": "Reduce cold filename traversal and warm-index filtering work",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Filename traversal stats every file and traverses all subdirectories; warm JSONL indexes still require a full scan.",
+    "proposal": "Profile stat/metadata work and compile reusable filter predicates. Evaluate safe directory pruning for narrow include prefixes; consider an alternate index only when scan cost is material. Never publish a query-filtered index as a complete tree index.",
+    "acceptance": [
+      "Broad and narrow patterns preserve the same match set as the current implementation.",
+      "Complete cached indexes remain valid across different later queries.",
+      "Report measured wall-time/RSS tradeoffs on fresh and warm indexes before changing format."
+    ],
+    "depends_on": [
+      "BSG-010",
+      "BSG-016"
+    ],
+    "evidence": []
+  }
+}
