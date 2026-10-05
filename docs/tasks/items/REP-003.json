@@ -18,7 +18,8 @@
     ],
     "depends_on": [],
     "evidence": [
-      "Implemented on branch refactor/task-files-docs-ci with task-file and CI-selection regression coverage."
+      "https://github.com/rmorozov/bst-utilities/pull/5",
+      "67 non-integration tests passed locally, including task-file validation and CI routing; Ruff lint/format and exact preservation of all 22 existing tasks passed."
     ]
   }
 }
