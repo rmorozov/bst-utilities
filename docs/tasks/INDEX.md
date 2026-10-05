@@ -211,6 +211,7 @@ Acceptance:
 - Benchmark writes only temporary caches and records repeat distributions rather than a single best time.
 - Establish baselines before adopting concurrency, SQLite or direct content blob search.
 - Reproduce the reported 300-tree fixture with exact runtime versions and compare serial versus small bounded pools before choosing concurrency.
+- Separate readiness-poll waiting from actual FUSE startup; ensure_mount currently polls every 50 ms, close to the reported 52 ms per tree.
 
 Evidence:
 
@@ -232,7 +233,7 @@ Acceptance:
 
 All source trees are mounted before searching, although rg now runs sequentially per tree. Peak mounts and resident daemon/process costs grow with unique trees.
 
-Proposed work: Prioritize mount lifetimes after BSG-010 reproduces the reviewer baseline. Start with mount/search/cleanup scoped to one tree; compare a configurable small bounded pool, preserving resource ownership and output semantics. Reviewer measurements suggest serial mount startup (~52 ms/tree) dominates rg startup (~5 ms/tree), but pool speedups remain unmeasured.
+Proposed work: Prioritize mount lifetimes after BSG-010 reproduces the reviewer baseline. Start with mount/search/cleanup scoped to one tree; compare a configurable small bounded pool, preserving resource ownership and output semantics. Reviewer measurements suggest serial mount startup (~52 ms/tree) dominates rg startup (~5 ms/tree), but pool speedups remain unmeasured. The reported mount stage includes a 50 ms readiness-poll interval in ensure_mount; measure that overhead and compare an adaptive shorter initial poll before attributing the whole stage to actual mount startup or adding a pool.
 
 Acceptance:
 

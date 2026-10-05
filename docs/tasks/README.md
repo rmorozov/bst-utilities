@@ -49,6 +49,9 @@ performance claim. Reprioritize after benchmarks or user feedback.
    not reproduced here. Reproduce that fixture, then compare serial scoped
    mount/search/cleanup with a small bounded pool. Concurrency gains remain a
    hypothesis; active mounts and cancellation cleanup must remain bounded.
+   The current readiness loop sleeps 50 ms per poll, close to the reported
+   52 ms/tree. Separate polling delay from actual mount startup and compare a
+   shorter adaptive initial poll before adding worker-pool complexity.
 3. **BSG-011 and BSG-016: establish boundaries and glob contracts.** The private
    BuildStream adapter and differential matcher tests reduce regression risk.
    These can proceed alongside the benchmark/lifecycle work; preserve CLI and
