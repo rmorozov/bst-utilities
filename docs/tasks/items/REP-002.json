@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "REP-002",
+    "tool": "repository",
+    "title": "Make the task registry independent of locale encoding",
+    "area": "robustness",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Registry index Unicode fails under an ASCII locale.",
+    "proposal": "Use explicit UTF-8 reads/writes and test check/render with UTF-8 mode and locale coercion disabled.",
+    "acceptance": [
+      "check/render/check succeeds with LC_ALL=C, PYTHONUTF8=0 and PYTHONCOERCECLOCALE=0."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184910289",
+      "https://github.com/rmorozov/bst-utilities/pull/1",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

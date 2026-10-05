@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-015",
+    "tool": "bst-source-grep",
+    "title": "Provide actionable environment diagnostics",
+    "area": "usability",
+    "priority": "P2",
+    "status": "ready",
+    "effort": "M",
+    "problem": "Users currently discover missing binaries, FUSE permissions or cache layout problems one failure at a time.",
+    "proposal": "Design --doctor or equivalent diagnostics for installed versions, project options, selected backend, cache directory, binaries and device access. Stay offline and avoid mutating project refs.",
+    "acceptance": [
+      "Checks identify failure and next action without exposing credentials or private source origins by default.",
+      "Diagnostics distinguish CLI installation, cache absence, unresolved refs and FUSE access.",
+      "A machine-readable diagnostic format supports scripting."
+    ],
+    "depends_on": [],
+    "evidence": []
+  }
+}

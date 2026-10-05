@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "REP-003",
+    "tool": "repository",
+    "title": "Make task updates independent and documentation CI lightweight",
+    "area": "workflow",
+    "priority": "P1",
+    "status": "done",
+    "effort": "M",
+    "problem": "A shared registry and generated index create conflicts; post-merge status PRs repeat expensive validation.",
+    "proposal": "Store one JSON file per task, generate reports on demand, include completion evidence in implementation PRs, and select lightweight CI for documentation-only diffs.",
+    "acceptance": [
+      "Existing tasks and evidence survive migration and dependencies validate across files.",
+      "Independent task edits need no shared file or post-merge completion PR.",
+      "Documentation-only changes skip Python/BuildStream matrices; mixed changes and manual runs select full CI.",
+      "An always-running result check fails if selected validation fails."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "Implemented on branch refactor/task-files-docs-ci with task-file and CI-selection regression coverage."
+    ]
+  }
+}

@@ -1,36 +1,50 @@
-# Task registry
+# Tasks
 
-[INDEX.md](INDEX.md) is the human-readable view. `registry.json` is the canonical
-source for every tool in this repository. Keep stable IDs; never reuse a dropped
-or completed ID. `BSG-*` covers bst-source-grep; `REP-*` covers repository workflow.
-Assign a new prefix when another tool is introduced.
+Each task has its own canonical file in [items/](items/), named `<ID>.json`.
+There is no shared registry or checked-in generated index to update. Keep stable
+IDs; never reuse a dropped or completed ID. `BSG-*` covers bst-source-grep;
+`REP-*` covers repository workflow. Assign a prefix when another tool is added.
 
 ```sh
 python scripts/tasks.py list --tool bst-source-grep --status ready
-python scripts/tasks.py render
 python scripts/tasks.py check
+python scripts/tasks.py render > /tmp/bst-tasks.md
 ```
 
-Every task records its tool, problem, proposed work, area, priority, status,
-rough effort, acceptance criteria, dependencies and evidence. Evidence should
-link the PR, issue, benchmark or test result that supports a status change.
-The validator checks field types, enums, duplicate IDs, unknown dependencies,
-cycles and required evidence; `check` also rejects a stale Markdown view.
+`render` prints an optional Markdown report; do not commit the generated report.
+Each UTF-8 JSON file contains `schema_version: 1` and a `task` object with the
+existing ID, tool, title, problem, proposal, area, priority, status, effort,
+acceptance, dependencies and evidence fields. The validator loads all files in
+stable ID order and checks filenames, field types, duplicate IDs, unknown
+dependencies, cycles and required evidence.
 
 | Status | Meaning |
 | --- | --- |
-| proposed | Idea or optimization hypothesis; scope/measurement still needs refinement |
+| proposed | Idea or hypothesis; scope/measurement still needs refinement |
 | ready | Scoped enough to start; check dependencies before claiming it |
 | in_progress | Active implementation; record the working branch/PR as evidence |
-| in_review | Implementation and checks are available in an open PR |
+| in_review | Work is awaiting review or still lacks acceptance evidence |
 | blocked | Record the reason in proposal/evidence and dependencies |
-| done | Merged or otherwise delivered; acceptance criteria met with evidence |
+| done | Acceptance criteria met in this branch; delivery is effective when merged |
 | dropped | Retained for history, with the decision recorded in evidence |
 
-A ready task is actionable only after its dependencies are done. Status changes
-are explicit; the validator does not infer completion from GitHub automatically.
-Bootstrap and review fixes are delivered in merged PR #1. Future implementation
-tasks remain open; mark them done only after their delivery is confirmed.
+## One PR per change
+
+Include the task file and implementation in the same PR. Once acceptance checks
+pass, set the task to `done` in that PR and record the check results and PR/branch
+reference as evidence. Review and merge state live in GitHub, so `in_review` is
+optional; there is no second PR to mark work done after merge. On `main`, `done`
+means delivered. On an unmerged branch, it means ready for delivery; do not treat
+another branch's tasks as delivered dependencies. If review changes invalidate
+acceptance, reopen the task and update its evidence before merging.
+
+For concurrent work, edit only the task files you own. Record ownership through
+the working branch/PR; consult open PRs before claiming an existing task. Choose
+an unused ID on main and in open PRs when adding a task. Independent task edits
+merge independently; edits to the same task need coordination. Validation of
+merged files catches missing dependencies and cycles, but does not provide a
+locking service. Rebase onto current main and rerun validation before merging.
+Do not create separate claim/status-only PRs as a routine requirement.
 
 P1 means address before expansion or optimize a likely significant bottleneck;
 P2 means a useful follow-up; P3 means optional. S/M/L are relative effort estimates,

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-016",
+    "tool": "bst-source-grep",
+    "title": "Make filename glob limitations explicit and tested",
+    "area": "usability",
+    "priority": "P1",
+    "status": "ready",
+    "effort": "S",
+    "problem": "Filename matching implements a smaller glob dialect than rg; brace and negative include syntax can silently mean something different.",
+    "proposal": "Define a shared documented subset and reject unsupported filename patterns clearly; decide whether full parity is worth an added library after differential tests.",
+    "acceptance": [
+      "A table covers basename, slash, **, classes, dotfiles, case rules, include unions and exclusion precedence.",
+      "Unsupported brace/negative patterns never silently produce plausible wrong results.",
+      "CAS and FUSE filename modes agree for the supported subset."
+    ],
+    "depends_on": [],
+    "evidence": []
+  }
+}

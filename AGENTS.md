@@ -10,16 +10,19 @@ Read README.md and the affected tool's document in docs/ before changing behavio
 - `pyproject.toml`: command entry points, dependency extras, validation settings.
 - `tests/`: regression tests and isolated integration fixtures.
 - `docs/`: per-tool contracts, design notes, review findings and roadmap.
-- `docs/tasks/registry.json`: canonical cross-tool task registry; see its README.
+- `docs/tasks/items/<ID>.json`: individual cross-tool task files; see their README.
 - `scripts/tasks.py`: registry validation and Markdown generation.
 
 ## Agent work loop
 
 1. Read the issue/request, relevant code and task registry. Reuse a matching task
    ID or add a scoped task before substantial new work; check dependencies.
-   Move a claimed task to in_progress, then in_review with PR/check evidence.
-   Mark done only when delivered/merged and acceptance criteria are met. Identify the observable problem and
-   acceptance criteria; record material assumptions in the PR.
+   Record the working branch/PR as ownership evidence; check open PRs before
+   claiming the same task or assigning a new ID. Include task changes in the
+   implementation PR. Mark done once acceptance checks pass in that branch;
+   on main this becomes delivered when merged. No post-merge status PR is needed.
+   Identify the observable problem and acceptance criteria; record material
+   assumptions in the PR.
 2. Use a focused branch. For behavior fixes, reproduce the failure and add a
    regression test that checks behavior. For a new tool, add its CLI contract,
    documentation, entry point and tests together.
@@ -30,8 +33,8 @@ Read README.md and the affected tool's document in docs/ before changing behavio
 5. Open/update a PR with the problem, resulting behavior, validation and remaining
    limitations. Inspect CI and review comments; fix actionable findings, rerun
    affected checks, and update the description to match the final implementation.
-   Update registry evidence/status and run `python scripts/tasks.py render` before
-   committing registry changes. Keep the generated index current.
+   Update only the affected task files and run `python scripts/tasks.py check`.
+   Generate reports on demand; do not commit a shared generated index.
 6. Merge only when the user has authorized merging and required checks pass.
    Do not silently change branch protection, bypass failures or enable auto-merge.
 
@@ -70,3 +73,12 @@ python scripts/tasks.py check
 
 No hosted AI credential or unattended write automation is required by this repo.
 Agents use the same branch, PR, review and CI process as human contributors.
+
+## Documentation CI
+
+Documentation-only changes run task validation, workflow-filter/task tests and
+focused lint/format checks. Runtime, dependency, script, test or workflow changes
+run the full Python and BuildStream matrices too. Manual runs always run full CI.
+`CI result` aggregates the selected checks; do not change branch protection as
+part of routine development. No FUSE/BuildStream installation is needed for the
+lightweight documentation job.

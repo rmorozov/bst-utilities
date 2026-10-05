@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-018",
+    "tool": "bst-source-grep",
+    "title": "Inspect and prune path-index cache safely",
+    "area": "usability",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Versioned indexes accumulate and corrupt entries currently require manual rebuild flags; cache scope is opaque.",
+    "proposal": "Add offline cache size/entry inspection and explicit prune/rebuild actions. Consider corruption fallback only with a visible diagnostic and no silently lost matches.",
+    "acceptance": [
+      "Inspection shows version, digest, entry count and disk footprint.",
+      "Pruning does not remove in-use temporary indexes or unrelated caches.",
+      "Concurrent writers and corrupt/truncated indexes have regression coverage."
+    ],
+    "depends_on": [],
+    "evidence": []
+  }
+}

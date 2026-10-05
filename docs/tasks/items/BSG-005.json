@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-005",
+    "tool": "bst-source-grep",
+    "title": "Distinguish unresolved refs from missing caches",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Unresolved cache keys cause a leaked NoneType error and misleading fetch advice.",
+    "proposal": "Check source resolution before querying the cache and print track/configure-ref guidance.",
+    "acceptance": [
+      "Real unresolved remote source returns 2 with actionable advice and no TypeError."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184603116",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}

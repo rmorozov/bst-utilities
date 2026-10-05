@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-020",
+    "tool": "bst-source-grep",
+    "title": "Prune .git directories during FUSE filename enumeration",
+    "area": "performance",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "FUSE find enumerates .git subtrees only to reject their files afterwards.",
+    "proposal": "Pass the same .git exclusion to rg --files as content search, retaining the shared post-filter.",
+    "acceptance": [
+      "Filename and content results exclude root/nested .git files while slash filters still work."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451",
+      "https://github.com/rmorozov/bst-utilities/pull/1",
+      "Delivered in merged PR #1 at cd94684843afee7a56eb148aa9de07b6b54c684e.",
+      "https://github.com/rmorozov/bst-utilities/actions/runs/37323000250"
+    ]
+  }
+}
