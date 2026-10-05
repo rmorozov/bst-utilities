@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bst-utilities"
+version = "0.1.0"
+description = "Helpers for BuildStream 2.8+ workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{name = "Ruslan Morozov"}]
+dependencies = []
+
+[project.optional-dependencies]
+buildstream = ["BuildStream>=2.8,<3"]
+dev = ["pytest>=8,<10", "ruff>=0.11,<0.17"]
+
+[project.scripts]
+bst-source-grep = "bst_utilities.source_grep:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["integration: real BuildStream project and CAS tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
