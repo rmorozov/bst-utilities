@@ -53,8 +53,8 @@ are escaped in JSON when supplied by rg; plain text can replace invalid bytes.
 Content globs are evaluated relative to each source-tree root. Each distinct
 mounted tree gets one rg process so the requested root remains correct and
 ripgrep can prune excluded paths. Normal searches retain no output deduplication
-set; `--strip-junctions` retains compact path/line keys because display names can
-collide. Source attribution is a heuristic, not proof of which overlapping source wrote
+set; `--strip-junctions` retains compact path/line/text keys because display names
+can collide; identical lines collapse, different lines at the same position do not. Source attribution is a heuristic, not proof of which overlapping source wrote
 a file.
 
 | Exit code | Meaning |

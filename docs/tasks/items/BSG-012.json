@@ -22,7 +22,7 @@
     ],
     "evidence": [
       "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451",
-      "Branch claude/project-thread-ytzju7 (PR pending).",
+      "Branch claude/project-thread-ytzju7, PR #6.",
       "Each unique tree is mounted, searched and released before the next; --stats reports peak mounts 1, one buildbox-fuse and one rg process per tree.",
       "Readiness polling backs off from 1 ms to 50 ms; release stops buildbox-fuse with SIGTERM (it unmounts itself) and falls back to fusermount/umount only if the mount survives.",
       "content-unique-trees (300 trees): wall 19.97 s -> 5.14 s, mount 15.43 s -> 1.34 s, cleanup 1.54 s -> 0.56 s, peak mounts 300 -> 1; other scenarios unchanged or faster (content-small-files 1.86 -> 1.73 s).",

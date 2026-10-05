@@ -1,5 +1,6 @@
 """Offline end-to-end test using an isolated BuildStream configuration/cache."""
 
+import hashlib
 import json
 import os
 import re
@@ -313,3 +314,101 @@ def test_benchmark_harness_smoke(tmp_path):
         assert trees["peak mounts"] == 1 and trees["rg processes"] == 5
         assert by_name["content-duplicate-trees"]["runs"][0]["fuse processes"] == 1
     assert "| find-warm-index |" in result.stdout
+
+
+@pytest.mark.integration
+def test_junctions_nested_fetch_strip_and_targets(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    def project(root, name, files, elements):
+        (root / "elements").mkdir(parents=True)
+        (root / "project.conf").write_text(
+            f"name: {name}\nmin-version: 2.0\nelement-path: elements\n"
+        )
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text)
+        for element, text in elements.items():
+            (root / "elements" / element).write_text(text)
+
+    local = "kind: import\nsources:\n- kind: local\n  path: src\n"
+    leaf = tmp_path / "leaf"
+    project(leaf, "leaf", {"src/leaf.txt": "leaf needle\n"}, {"leaf.bst": local})
+    archive = tmp_path / "leaf.tar"
+    shutil.make_archive(str(archive.with_suffix("")), "tar", leaf)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    main = tmp_path / "main"
+    project(
+        main / "sub",
+        "sub",
+        {"src/lib.txt": "sub needle\n"},
+        {
+            "lib.bst": local,
+            "inner.bst": f"kind: junction\nsources:\n- kind: tar\n  url: file://{archive}\n"
+            f"  ref: {digest}\n",
+        },
+    )
+    project(
+        main,
+        "main",
+        {"src/lib.txt": "main needle\n"},
+        {
+            "lib.bst": local,
+            "sub.bst": "kind: junction\nsources:\n- kind: local\n  path: sub\n",
+            "alias.bst": "kind: link\nconfig:\n  target: sub.bst:lib.bst\n",
+            "app.bst": "kind: stack\ndepends:\n- lib.bst\n- alias.bst\n- sub.bst:inner.bst:leaf.bst\n",
+        },
+    )
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    def search(*args):
+        cmd = [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+        return subprocess.run(
+            cmd + ["-C", str(main), *args], env=env, capture_output=True, text=True, timeout=120
+        )
+
+    refused = search("app.bst", "--find", "*.txt")
+    assert refused.returncode == 2
+    assert "Subproject sources are missing for sub.bst" in refused.stderr, refused.stderr
+    # Junctions are fetched on request (this used to crash in the scheduler callbacks);
+    # element sources stay unfetched, so the search reports them as uncached.
+    fetched = search("app.bst", "--find", "*.txt", "--fetch-subprojects")
+    assert fetched.returncode == 2, fetched.stderr
+    assert "source tree is not cached: sub.bst:inner.bst:leaf.bst" in fetched.stderr
+    assert "NoneType" not in fetched.stderr
+
+    subprocess.run(
+        ["bst", "-C", str(main), "--config", str(config), "--no-interactive"]
+        + ["source", "fetch", "--deps", "all", "app.bst"],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    found = search("app.bst", "--find", "*.txt")
+    assert sorted(found.stdout.splitlines()) == [
+        "lib.bst:lib.txt",
+        "sub.bst:inner.bst:leaf.bst:leaf.txt",
+        "sub.bst:lib.bst:lib.txt",
+    ], found.stderr
+    nested = search("sub.bst:inner.bst:leaf.bst", "--find", "*")
+    assert nested.stdout.splitlines() == ["sub.bst:inner.bst:leaf.bst:leaf.txt"]
+    if os.path.exists("/dev/fuse"):
+        # Stripping collapses names, never distinct content at the same path/line.
+        stripped = search(
+            "app.bst", "needle", "--strip-junctions", "--mount-dir", str(tmp_path / "m")
+        )
+        assert sorted(stripped.stdout.splitlines()) == [
+            "leaf.bst:leaf.txt:leaf needle",
+            "lib.bst:lib.txt:main needle",
+            "lib.bst:lib.txt:sub needle",
+        ], stripped.stderr

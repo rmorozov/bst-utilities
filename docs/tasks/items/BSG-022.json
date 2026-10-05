@@ -16,7 +16,7 @@
     ],
     "depends_on": [],
     "evidence": [
-      "Branch claude/project-thread-ytzju7 (PR pending).",
+      "Branch claude/project-thread-ytzju7, PR #6.",
       "tests/test_mount_lifetime.py::test_options_may_follow_target_and_pattern; benchmark output-fanout passes."
     ]
   }

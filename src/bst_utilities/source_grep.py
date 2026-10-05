@@ -2177,8 +2177,10 @@ def make_selection(choice: str):
 def create_project(Project, context, args, fetch_subprojects=None):
     # BuildStream expects a callback here, not the CLI's boolean.
     def refuse_fetch(junctions):
+        names = ", ".join(sorted(element_label(j) for j in junctions)) or "unknown junction"
         raise RuntimeError(
-            "Subproject sources are missing; fetch junctions with bst first "
+            f"Subproject sources are missing for {names}; fetch them with bst "
+            "(e.g. bst source fetch on a junction or any element inside it) "
             "or pass --fetch-subprojects to allow fetching"
         )
 
@@ -2453,7 +2455,14 @@ def _main() -> int:
                 ctx.load(args.config)
                 attach_dummy_message_handler(ctx)
 
-                stream = Stream(ctx, datetime.now())
+                # The scheduler only runs for --fetch-subprojects; it calls both
+                # callbacks unconditionally, so provide non-interactive ones.
+                stream = Stream(
+                    ctx,
+                    datetime.now(),
+                    interrupt_callback=lambda: stream.terminate(),
+                    ticker_callback=lambda: None,
+                )
                 stream.init()
                 project = create_project(Project, ctx, args, stream.fetch_subprojects)
                 stream.set_project(project)
@@ -2611,7 +2620,9 @@ def _main() -> int:
                         element_info["recipe"] if args.strip_junctions else element_info["label"]
                     )
 
-                    if dedup.duplicate("match", display, rel_path, line_number):
+                    # Distinct trees can share a stripped recipe name and path but
+                    # differ in content, so the line text is part of the identity.
+                    if dedup.duplicate("match", display, rel_path, (line_number, hash(text))):
                         return
 
                     if args.json:

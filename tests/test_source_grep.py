@@ -247,7 +247,7 @@ def test_main_exit_statuses(monkeypatch, tmp_path, capsys, status, paths, expect
             pass
 
     class Stream:
-        def __init__(self, ctx, start):
+        def __init__(self, ctx, start, **callbacks):
             pass
 
         def init(self):

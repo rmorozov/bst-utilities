@@ -21,7 +21,7 @@
     "depends_on": [],
     "evidence": [
       "https://github.com/rmorozov/bst-utilities/pull/1#discussion_r4184911451",
-      "Branch claude/project-thread-ytzju7 (PR pending).",
+      "Branch claude/project-thread-ytzju7, PR #6.",
       "scripts/bench_source_grep.py builds offline fixtures (20000 small files, 4x16 MiB files, 300 unique 3-file trees, 100 elements sharing one tree) in a temporary work directory and runs 9 scenarios with repeat distributions, per-phase timings, peak mounts, process counts and RSS.",
       "Measured on Python 3.11.15, BuildStream 2.8.0, buildbox-fuse 1.4.15, ripgrep 14.1.0, 4 CPUs, Linux 6.18, as root; 3 repeats, medians.",
       "Reviewer fixture reproduced on main 775a143: content-unique-trees wall 19.97 s, mount 15.43 s, search 1.61 s, deferred cleanup 1.54 s.",
