@@ -149,7 +149,10 @@ backoff polling took the content search from 20.0 s (15.4 s of it mounting) to
 On freedesktop-sdk `sdk.bst` (615 elements, 468 trees, 4-CPU GitHub runner) the
 medians were: find with a warm index 32 s (24 s of it project load), without one
 63-68 s at 1.64 GiB peak RSS, and a no-match content scan 326 s (282 s search,
-13 s releases). See BSG-013, BSG-021 and BSG-024 for the follow-ups.
+13 s releases). After BSG-013, BSG-021 and BSG-024: find with a warm index
+24 s, without one 28 s at 120 MiB, and the same scan 239 s with `--jobs 4`
+(374 s with `--jobs 1`). Load is now 17.5-20 s, of which 1.4 s is project
+load and the rest casd verifying the ~600k file blobs of 468 trees.
 
 See [the task registry](tasks/README.md) for prioritized next steps, including
 benchmarking, module boundaries, bounded mounts and improved diagnostics.
