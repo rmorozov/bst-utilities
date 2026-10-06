@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-023",
+    "tool": "bst-source-grep",
+    "title": "Junction corner cases: fetch, refusal and stripped duplicates",
+    "area": "correctness",
+    "priority": "P1",
+    "status": "done",
+    "effort": "S",
+    "problem": "Three junction defects found with a nested-junction probe: --fetch-subprojects crashed with \"'NoneType' object is not callable\" because the scheduler calls Stream's ticker and interrupt callbacks unconditionally; the refusal for an unfetched junction did not name the junction or how to fix it; and --strip-junctions de-duplicated distinct trees that share a stripped element name and path, hiding real matches.",
+    "proposal": "Give Stream non-interactive ticker/interrupt callbacks, name the missing junctions and the bst command in the refusal, and include the matched text in the strip-junctions de-duplication key.",
+    "acceptance": [
+      "--fetch-subprojects reaches the per-element result (uncached element error) instead of a TypeError.",
+      "Without --fetch-subprojects the error names the unfetched junction.",
+      "Nested junction elements (a.bst:b.bst:c.bst), link elements and nested targets are searched.",
+      "--strip-junctions reports both lines when distinct trees share a stripped name and path."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "Branch claude/project-thread-ytzju7, PR #6.",
+      "tests/test_integration.py::test_junctions_nested_fetch_strip_and_targets fails on the previous code and passes with the fix."
+    ]
+  }
+}

@@ -1,12 +1,15 @@
 """Offline end-to-end test using an isolated BuildStream configuration/cache."""
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import select
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -251,3 +254,232 @@ def test_fuse_slash_globs_statistics_and_closed_pipe(review_project):
     assert proc.wait(timeout=60) == 141
     assert not proc.stderr.read(), "closed pipe should produce no bogus search diagnostics"
     assert not list(mounts.iterdir())
+
+
+@pytest.mark.integration
+def test_fuse_mounts_bounded_by_jobs_with_ordered_output(review_project):
+    p = review_project
+    if not os.path.exists("/dev/fuse"):
+        if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+            pytest.fail("FUSE integration is required but /dev/fuse is missing")
+        pytest.skip("/dev/fuse is unavailable")
+    elements = p.project / "elements"
+    names = [f"t{i}" for i in range(6)]
+    for name in names:
+        (p.project / name).mkdir()
+        (p.project / name / "file.txt").write_text(f"{name} dir\nother\n{name} dir again\n")
+        (elements / f"{name}.bst").write_text(
+            f"kind: import\nsources:\n- kind: local\n  path: {name}\n"
+        )
+        p.fetch(f"{name}.bst")
+    deps = "".join(f"- {name}.bst\n" for name in names)
+    (elements / "trees.bst").write_text(f"kind: stack\ndepends:\n{deps}")
+    mounts = p.tmp_path / "mounts"
+    outputs = {}
+    for jobs in (1, 3):
+        for extra in ([], ["--origin"]):
+            result = p.search(
+                "trees.bst",
+                "-n",
+                "dir",
+                "--json",
+                "--stats",
+                "--mount-dir",
+                str(mounts),
+                "--jobs",
+                str(jobs),
+                *extra,
+            )
+            assert result.returncode == 0, result.stderr
+            outputs[jobs, bool(extra)] = result.stdout
+            limit = jobs + 1 if extra and jobs > 1 else jobs
+            assert re.search(rf"peak mounts:\s+[1-{limit}]\b", result.stderr), result.stderr
+            assert re.search(r"fuse processes:\s+6\b", result.stderr), result.stderr
+            assert re.search(r"rg processes:\s+6\b", result.stderr), result.stderr
+            assert not list(mounts.iterdir())
+    records = [json.loads(line) for line in outputs[1, False].splitlines()]
+    assert [(r["element"], r["line"]) for r in records] == [
+        (f"{name}.bst", line) for name in sorted(names) for line in (1, 3)
+    ]
+    # Pooled output is byte-identical to serial output, in the same order.
+    assert outputs[3, False] == outputs[1, False]
+    assert outputs[3, True] == outputs[1, True]
+
+
+@pytest.mark.integration
+def test_single_tree_streams_before_rg_finishes(review_project):
+    p = review_project
+    if not os.path.exists("/dev/fuse"):
+        if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+            pytest.fail("FUSE integration is required but /dev/fuse is missing")
+        pytest.skip("/dev/fuse is unavailable")
+    # A stand-in rg that emits enough matches to flush, then keeps running.
+    fake_bin = p.tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    rg = fake_bin / "rg"
+    rg.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, time\n"
+        "for n in range(20000):\n"
+        "    event = {'type': 'match', 'data': {'path': {'text': './file.txt'},\n"
+        "             'lines': {'text': 'line\\n'}, 'line_number': n + 1}}\n"
+        "    sys.stdout.write(json.dumps(event) + '\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(120)\n"
+    )
+    rg.chmod(0o755)
+    p.fetch("multi.bst")
+    mounts = p.tmp_path / "mounts"
+    env = dict(p.env, PATH=f"{fake_bin}{os.pathsep}{p.env['PATH']}")
+    start = time.monotonic()
+    proc = subprocess.Popen(
+        p.base + ["multi.bst", "line", "--jobs", "4", "--mount-dir", str(mounts)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        ready, _, _ = select.select([proc.stdout], [], [], 60)
+        assert ready, "no output while rg was still running"
+        assert proc.stdout.readline().startswith(b"multi.bst:")
+        proc.stdout.close()
+        assert proc.wait(timeout=60) == 141
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert time.monotonic() - start < 100, "search waited for rg to finish"
+    assert not list(mounts.iterdir())
+
+
+@pytest.mark.integration
+def test_benchmark_harness_smoke(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+    report_path = tmp_path / "bench.json"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "bench_source_grep.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--scale", "tiny", "--repeats", "1"]
+        + ["--json-out", str(report_path)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["environment"]["buildstream"] != "unavailable"
+    by_name = {entry["scenario"]: entry for entry in report["results"]}
+    fresh = by_name["find-fresh-index"]["runs"][0]
+    assert fresh["results"] == 100 and fresh["path cache misses"] == 1
+    assert by_name["find-warm-index"]["runs"][0]["path cache hits"] == 1
+    if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+        trees = by_name["content-unique-trees"]["runs"][0]
+        assert 1 <= trees["peak mounts"] <= trees["search jobs"] and trees["rg processes"] == 5
+        serial = by_name["content-unique-trees-serial"]["runs"][0]
+        assert serial["peak mounts"] == 1 and serial["search jobs"] == 1
+        assert by_name["content-duplicate-trees"]["runs"][0]["fuse processes"] == 1
+    assert "| find-warm-index |" in result.stdout
+
+
+@pytest.mark.integration
+def test_junctions_nested_fetch_strip_and_targets(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    def project(root, name, files, elements):
+        (root / "elements").mkdir(parents=True)
+        (root / "project.conf").write_text(
+            f"name: {name}\nmin-version: 2.0\nelement-path: elements\n"
+        )
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text)
+        for element, text in elements.items():
+            (root / "elements" / element).write_text(text)
+
+    local = "kind: import\nsources:\n- kind: local\n  path: src\n"
+    leaf = tmp_path / "leaf"
+    project(leaf, "leaf", {"src/leaf.txt": "leaf needle\n"}, {"leaf.bst": local})
+    archive = tmp_path / "leaf.tar"
+    shutil.make_archive(str(archive.with_suffix("")), "tar", leaf)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    main = tmp_path / "main"
+    project(
+        main / "sub",
+        "sub",
+        {"src/lib.txt": "sub needle\n"},
+        {
+            "lib.bst": local,
+            "inner.bst": f"kind: junction\nsources:\n- kind: tar\n  url: file://{archive}\n"
+            f"  ref: {digest}\n",
+        },
+    )
+    project(
+        main,
+        "main",
+        {"src/lib.txt": "main needle\n"},
+        {
+            "lib.bst": local,
+            "sub.bst": "kind: junction\nsources:\n- kind: local\n  path: sub\n",
+            "alias.bst": "kind: link\nconfig:\n  target: sub.bst:lib.bst\n",
+            "app.bst": "kind: stack\ndepends:\n- lib.bst\n- alias.bst\n- sub.bst:inner.bst:leaf.bst\n",
+        },
+    )
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    def search(*args):
+        cmd = [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+        return subprocess.run(
+            cmd + ["-C", str(main), *args], env=env, capture_output=True, text=True, timeout=120
+        )
+
+    refused = search("app.bst", "--find", "*.txt")
+    assert refused.returncode == 2
+    assert "Subproject sources are missing for sub.bst" in refused.stderr, refused.stderr
+    # Junctions are fetched on request (this used to crash in the scheduler callbacks);
+    # element sources stay unfetched, so the search reports them as uncached.
+    fetched = search("app.bst", "--find", "*.txt", "--fetch-subprojects")
+    assert fetched.returncode == 2, fetched.stderr
+    assert "source tree is not cached: sub.bst:inner.bst:leaf.bst" in fetched.stderr
+    assert "NoneType" not in fetched.stderr
+
+    subprocess.run(
+        ["bst", "-C", str(main), "--config", str(config), "--no-interactive"]
+        + ["source", "fetch", "--deps", "all", "app.bst"],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    found = search("app.bst", "--find", "*.txt")
+    assert sorted(found.stdout.splitlines()) == [
+        "lib.bst:lib.txt",
+        "sub.bst:inner.bst:leaf.bst:leaf.txt",
+        "sub.bst:lib.bst:lib.txt",
+    ], found.stderr
+    nested = search("sub.bst:inner.bst:leaf.bst", "--find", "*")
+    assert nested.stdout.splitlines() == ["sub.bst:inner.bst:leaf.bst:leaf.txt"]
+    if os.path.exists("/dev/fuse"):
+        # Stripping collapses names, never distinct content at the same path/line.
+        stripped = search(
+            "app.bst", "needle", "--strip-junctions", "--mount-dir", str(tmp_path / "m")
+        )
+        assert sorted(stripped.stdout.splitlines()) == [
+            "leaf.bst:leaf.txt:leaf needle",
+            "lib.bst:lib.txt:main needle",
+            "lib.bst:lib.txt:sub needle",
+        ], stripped.stderr

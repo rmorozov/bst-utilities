@@ -1,0 +1,102 @@
+name: Benchmark freedesktop-sdk
+# Real-workload profile of bst-source-grep. Fetches freedesktop-sdk sources into
+# a runner-local cache, then runs scripts/bench_source_grep.py --project on it.
+# Manual only (about 45 minutes, network-heavy, informative): start it from the
+# Actions tab or the API on any branch once this file is on the default branch.
+on:
+  workflow_dispatch:
+    inputs:
+      fdsdk_ref:
+        description: freedesktop-sdk commit, tag or branch
+        default: 7cb8bebe08606f0cf3b33a5557e7b7866fe57ff1
+      target:
+        description: element to fetch and search
+        default: sdk.bst
+      repeats:
+        description: repeats per scenario
+        default: '2'
+      buildstream:
+        description: BuildStream requirement
+        default: BuildStream==2.8.0
+permissions:
+  contents: read
+concurrency:
+  group: bench-fdsdk-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  FDSDK_REF: ${{ inputs.fdsdk_ref || '7cb8bebe08606f0cf3b33a5557e7b7866fe57ff1' }}
+  TARGET: ${{ inputs.target || 'sdk.bst' }}
+  REPEATS: ${{ inputs.repeats || '2' }}
+  BST_REQ: ${{ inputs.buildstream || 'BuildStream==2.8.0' }}
+jobs:
+  bench:
+    name: freedesktop-sdk (${{ inputs.target || 'sdk.bst' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force > /dev/null || true
+          df -h / /mnt || true
+      - name: Choose work directory
+        run: |
+          # Use whichever filesystem has the most free space; /mnt is often larger.
+          best=/home/runner/work-bench
+          free=$(df --output=avail -B1 / | tail -1)
+          if [ -d /mnt ] && [ "$(df --output=avail -B1 /mnt | tail -1)" -gt "$free" ]; then
+            best=/mnt/work-bench
+          fi
+          sudo mkdir -p "$best" && sudo chown "$USER" "$best"
+          echo "WORK=$best" >> "$GITHUB_ENV"
+          df -h "$best"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap fuse3 ripgrep lzip
+      # freedesktop-sdk's source plugins need dulwich, requests, tomlkit and arpy.
+      - run: python -m pip install -e . "$BST_REQ" dulwich requests tomlkit arpy
+      - run: bst --version && test -c /dev/fuse
+      - name: Check out freedesktop-sdk
+        run: |
+          git init -q "$WORK/fdsdk"
+          url=https://gitlab.com/freedesktop-sdk/freedesktop-sdk.git
+          git -C "$WORK/fdsdk" fetch -q --depth 1 "$url" "$FDSDK_REF" \
+            || git -C "$WORK/fdsdk" fetch -q "$url" "$FDSDK_REF"
+          git -C "$WORK/fdsdk" checkout -q FETCH_HEAD
+          git -C "$WORK/fdsdk" log -1 --format='freedesktop-sdk %H %cs'
+          cat > "$WORK/bst.conf" <<EOF
+          cachedir: $WORK/cache
+          scheduler:
+            fetchers: 16
+            network-retries: 3
+          EOF
+      - name: Fetch sources
+        run: |
+          # Fetch failures leave elements uncached; the benchmark reports them
+          # and --allow-partial accepts the resulting partial searches.
+          cd "$WORK/fdsdk"
+          start=$(date +%s)
+          bst --config "$WORK/bst.conf" --no-interactive --on-error continue \
+            source fetch --deps all "$TARGET" > "$WORK/fetch.log" 2>&1 \
+            && rc=0 || rc=$?
+          echo "fetch exit $rc after $(( $(date +%s) - start ))s"
+          grep -E '^\[.*\] FAILURE' "$WORK/fetch.log" | tail -40 || true
+          du -sh "$WORK/cache"
+          df -h "$WORK"
+      - name: Benchmark
+        run: |
+          python scripts/bench_source_grep.py --project "$WORK/fdsdk" \
+            --config "$WORK/bst.conf" --target "$TARGET" --repeats "$REPEATS" \
+            --allow-partial --json-out "$WORK/bench.json" | tee "$WORK/bench.md"
+          cat "$WORK/bench.md" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-fdsdk
+          path: |
+            ${{ env.WORK }}/bench.json
+            ${{ env.WORK }}/bench.md
+            ${{ env.WORK }}/fetch.log
+          if-no-files-found: ignore

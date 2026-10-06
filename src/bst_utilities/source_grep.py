@@ -38,6 +38,9 @@ import sys
 import time
 import traceback
 import tempfile
+import threading
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +55,16 @@ BUILDBOX_FUSE_NAMES = (
     "buildbox-fuse",
     "buildbox-fuse.exe",
 )
+
+# Readiness polling backs off from 1 ms to 50 ms per buildbox-fuse mount.
+# Seconds aborted rg processes get after SIGTERM before SIGKILL.
+ABORT_GRACE_SECONDS = 2.0
+# Default concurrent trees for content searches (BSG-021).
+DEFAULT_JOBS = 4
+# Concurrent casd FetchTree checks while loading source cache state.
+CACHE_CHECK_WORKERS = 8
+MOUNT_POLL_INITIAL = 0.001
+MOUNT_POLL_MAX = 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +255,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="SHA256",
         choices=("SHA256", "SHA384", "SHA512", "SHA1", "MD5"),
         help="digest function used by buildbox-fuse (default: SHA256)",
+    )
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "content-search trees mounted and searched concurrently "
+            "(default: min(4, CPUs); 1 streams each tree's output as it is found)"
+        ),
     )
     parser.add_argument(
         "--keep-mounts",
@@ -539,6 +563,87 @@ def load_source_directory(element):
         return None, "uncached", "get_files() returned None"
 
     return files, "ok", None
+
+
+def prefetch_source_cache_state(elements, ctx, workers):
+    """
+    Answer BuildStream's per-element source cache checks from concurrent ones.
+
+    ElementSources.query_cache() verifies each tree with a casd FetchTree call
+    that stats every file blob; done serially per element it dominates load on
+    large projects. Issue the same local-only FetchTree once per unique tree,
+    with up to `workers` RPCs in flight, and serve CASCache.contains_directory()
+    from the results. RPC futures are awaited on this thread and all of them are
+    cancelled if the wait is interrupted, so Ctrl-C never waits on casd. Only
+    the definite answers (OK, NOT_FOUND) are recorded; anything else, or a
+    remote cache, leaves BuildStream's own call in place.
+    Returns the number of trees checked.
+    """
+    try:
+        import grpc
+        from buildstream._protos.build.buildgrid import local_cas_pb2
+
+        cas = ctx.get_cascache()
+        original = cas.contains_directory
+        if getattr(cas, "_remote_cache", True):
+            return 0
+        local_cas = cas._casd.get_local_cas()
+    except Exception:
+        return 0
+
+    digests = {}
+    for element in elements:
+        try:
+            accessor = source_accessor(element)
+            if accessor is None or not source_count(element, accessor):
+                continue
+            accessor.update_resolved_state()
+            if not accessor.is_resolved():
+                continue
+            proto = accessor._elementsourcescache.load_proto(accessor)
+        except Exception:
+            continue
+        if proto is not None:
+            digests[(proto.files.hash, proto.files.size_bytes)] = proto.files
+
+    if len(digests) < 2:
+        return 0
+
+    def start(digest):
+        request = local_cas_pb2.FetchTreeRequest()
+        request.root_digest.CopyFrom(digest)
+        request.fetch_file_blobs = True  # same as BuildStream without a remote cache
+        return local_cas.FetchTree.future(request)
+
+    results = {}
+    queue = deque(digests.items())
+    in_flight = deque()
+    try:
+        while queue or in_flight:
+            while queue and len(in_flight) < workers:
+                key, digest = queue.popleft()
+                in_flight.append((key, start(digest)))
+            # Leave the awaited RPC in in_flight so an interrupt cancels it too.
+            key, future = in_flight[0]
+            try:
+                future.result()
+                results[key] = True
+            except grpc.RpcError as exc:
+                if exc.code() == grpc.StatusCode.NOT_FOUND:
+                    results[key] = False
+            in_flight.popleft()
+    finally:
+        for _, future in in_flight:
+            future.cancel()
+
+    def contains_directory(digest, *args, **kwargs):
+        known = results.get((digest.hash, digest.size_bytes))
+        if known is None or args or kwargs:
+            return original(digest, *args, **kwargs)
+        return known
+
+    cas.contains_directory = contains_directory
+    return len(digests)
 
 
 def get_source_objects(element, accessor):
@@ -974,6 +1079,34 @@ def iter_relative_paths(directory):
     raise RuntimeError("BuildStream CAS directory does not expose list_relative_paths() or walk()")
 
 
+def iter_cas_files(cas_dir: str, digest):
+    """
+    Yield regular-file paths of a CAS tree by reading Directory protos directly.
+
+    Same order as CasBasedDirectory.list_relative_paths() filtered to regular
+    files (sorted files, then sorted subdirectories, depth first), but without
+    BuildStream caching every visited subdirectory as a Python object or
+    resolving each path from the root again. Memory is bounded by tree depth.
+    """
+    from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2
+
+    def read(dir_digest):
+        h = dir_digest.hash
+        message = remote_execution_pb2.Directory()
+        with open(os.path.join(cas_dir, "objects", h[:2], h[2:]), "rb") as f:
+            message.ParseFromString(f.read())
+        return message
+
+    # Each frame: (prefix, iterator over sorted subdirectory nodes).
+    def frame(prefix, message):
+        for name in sorted(node.name for node in message.files):
+            yield f"{prefix}{name}"
+        for node in sorted(message.directories, key=lambda n: n.name):
+            yield from frame(f"{prefix}{node.name}/", read(node.digest))
+
+    yield from frame("", read(digest))
+
+
 # ---------------------------------------------------------------------------
 # Path-index cache helpers
 # ---------------------------------------------------------------------------
@@ -988,7 +1121,14 @@ def iter_path_cache_file(cache_file: Path):
             yield path
 
 
-def iter_directory_and_cache(directory, cache_file: Path):
+def tree_paths(tree, cas_dir):
+    digest = tree.get("digest_obj")
+    if cas_dir and getattr(digest, "hash", None):
+        return iter_cas_files(cas_dir, digest)
+    return iter_relative_paths(tree["directory"])
+
+
+def iter_directory_and_cache(paths, cache_file: Path):
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     # Each writer owns its temporary file; readers see only completed indexes.
     tmp_file = None
@@ -1002,7 +1142,7 @@ def iter_directory_and_cache(directory, cache_file: Path):
             delete=False,
         ) as out:
             tmp_file = Path(out.name)
-            for path in iter_relative_paths(directory):
+            for path in paths:
                 out.write(json.dumps(path) + "\n")
                 yield path
         os.replace(tmp_file, cache_file)
@@ -1057,20 +1197,114 @@ def rg_process(cmd, *, cwd=None):
                     proc.wait()
 
 
+def iter_records(stream, null):
+    """Decode rg output: text lines, or NUL-terminated file names."""
+    if not null:
+        for line in stream:
+            yield line.decode("utf-8", "replace")
+    else:
+        pending = b""
+        while chunk := stream.read(65536):
+            records = (pending + chunk).split(b"\0")
+            pending = records.pop()
+            for record in records:
+                yield os.fsdecode(record)
+        if pending:
+            raise SearchError("rg returned an unterminated filename")
+
+
 def iter_rg_output(cmd, *, null=False, cwd=None):
     with rg_process(cmd, cwd=cwd) as proc:
-        if not null:
-            for line in proc.stdout:
-                yield line.decode("utf-8", "replace")
-        else:
-            pending = b""
-            while chunk := proc.stdout.read(65536):
-                records = (pending + chunk).split(b"\0")
-                pending = records.pop()
-                for record in records:
-                    yield os.fsdecode(record)
-            if pending:
-                raise SearchError("rg returned an unterminated filename")
+        yield from iter_records(proc.stdout, null)
+
+
+class RgRunner:
+    """Run rg into a spool file from worker threads; abort() stops them all."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.active = set()
+        self.aborted = False
+
+    def run(self, cmd, cwd, out):
+        with tempfile.TemporaryFile(mode="w+b") as errors:
+            with self.lock:
+                if self.aborted:
+                    raise SearchError("search aborted")
+                proc = subprocess.Popen(cmd, cwd=cwd, stdout=out, stderr=errors)
+                self.active.add(proc)
+            try:
+                proc.wait()
+            finally:
+                if proc.poll() is None:
+                    stop_process(proc)
+                with self.lock:
+                    self.active.discard(proc)
+            if proc.returncode not in (0, 1):
+                errors.seek(0)
+                raise SearchError("rg failed: " + errors.read(65536).decode("utf-8", "replace"))
+
+    def abort(self, grace=ABORT_GRACE_SECONDS):
+        """Signal every running rg, then kill survivors after a bounded grace.
+
+        Workers reap their own child (they are blocked in wait()); this only
+        needs each child to exit so that their waits, and the pool, return.
+        """
+        with self.lock:
+            self.aborted = True
+            procs = list(self.active)
+        for proc in procs:
+            signal_process(proc, "terminate")
+        deadline = time.monotonic() + grace
+        for proc in procs:
+            # returncode is set by the reaping worker; poll() may not get the
+            # wait lock while that worker is blocked in waitpid.
+            while proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+        for proc in procs:
+            if proc.poll() is None:
+                signal_process(proc, "kill")
+
+
+def signal_process(proc, method):
+    try:
+        getattr(proc, method)()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+def iter_ordered(items, jobs, work, on_abort=None):
+    """
+    Run work(item) on up to `jobs` threads and yield (item, result) in input order.
+
+    At most `jobs` items run while the caller consumes the oldest finished one,
+    so spooled results stay bounded. Closing the generator early (interrupt,
+    closed pipe) calls on_abort, cancels queued items and waits for running ones.
+    """
+    pool = ThreadPoolExecutor(max_workers=jobs)
+    pending = deque()
+    source = iter(items)
+    finished = False
+    try:
+        for item in source:
+            pending.append((item, pool.submit(work, item)))
+            if len(pending) >= jobs:
+                break
+        while pending:
+            item, future = pending.popleft()
+            # Keep `jobs` items running while the caller consumes this one.
+            for nxt in source:
+                pending.append((nxt, pool.submit(work, nxt)))
+                break
+            yield item, future.result()
+        finished = True
+    finally:
+        if not finished:
+            if on_abort is not None:
+                on_abort()
+            for _, future in pending:
+                future.cancel()
+        pool.shutdown(wait=True)
 
 
 def rg_json_text(value):
@@ -1081,9 +1315,10 @@ def rg_json_text(value):
     raise ValueError("rg JSON is missing text/bytes")
 
 
-def iter_mounted_matches(args, mountpoint):
-    """Run rg from the tree root so slash globs apply to source-relative paths."""
+def rg_command(args):
+    """Return (rg argv, NUL-separated file output, path matcher or None)."""
     files = args.find is not None or args.files_with_matches
+    matcher = None
     if args.find is not None:
         cmd = ["rg", "--files", "--null", "--hidden", "--no-ignore", "--glob", "!**/.git/**", "."]
         matcher = make_path_filter(args)
@@ -1103,7 +1338,11 @@ def iter_mounted_matches(args, mountpoint):
         if args.binary_files == "text":
             cmd.append("--text")
         cmd.extend(["--", args.pattern, "."])
-    with closing(iter_rg_output(cmd, null=files, cwd=mountpoint)) as output:
+    return cmd, files, matcher
+
+
+def parse_rg_records(records, args, files, matcher):
+    with closing(records) as output:
         for line in output:
             if files:
                 path = line.removeprefix("./")
@@ -1120,6 +1359,20 @@ def iter_mounted_matches(args, mountpoint):
                     yield "match", path, data.get("line_number"), text
                 except (ValueError, KeyError, TypeError) as exc:
                     raise SearchError(f"invalid rg JSON: {exc}") from exc
+
+
+def iter_mounted_matches(args, mountpoint):
+    """Run rg from the tree root so slash globs apply to source-relative paths."""
+    cmd, files, matcher = rg_command(args)
+    yield from parse_rg_records(
+        iter_rg_output(cmd, null=files, cwd=mountpoint), args, files, matcher
+    )
+
+
+def iter_spooled_matches(args, spool):
+    _, files, matcher = rg_command(args)
+    spool.seek(0)
+    yield from parse_rg_records(iter_records(spool, files), args, files, matcher)
 
 
 def iter_checked_paths(iterator, tree, stats):
@@ -1902,10 +2155,15 @@ class FuseMountManager:
         self.keep_mounts = keep_mounts
         self.force_unmount = force_unmount
         self.mounts = {}
+        self.started = 0
+        self.peak = 0
+        # Content-search workers mount and release trees concurrently.
+        self.lock = threading.Lock()
 
     def ensure_mount(self, digest_value: str) -> str:
-        if digest_value in self.mounts:
-            return self.mounts[digest_value][0]
+        with self.lock:
+            if digest_value in self.mounts:
+                return self.mounts[digest_value][0]
 
         safe_digest = digest_value.replace("/", "_")
         # Never reuse another search's mount: its cleanup can race our readers.
@@ -1934,11 +2192,18 @@ class FuseMountManager:
         except Exception as exc:
             raise RuntimeError(f"failed to start buildbox-fuse: {exc}") from exc
 
+        with self.lock:
+            self.started += 1
         deadline = time.monotonic() + 10.0
+        # buildbox-fuse usually mounts within a few milliseconds; a fixed 50 ms
+        # poll made readiness waiting dominate per-tree mount cost.
+        delay = MOUNT_POLL_INITIAL
 
         while time.monotonic() < deadline:
             if os.path.ismount(mountpoint):
-                self.mounts[digest_value] = (mountpoint, proc, True)
+                with self.lock:
+                    self.mounts[digest_value] = (mountpoint, proc, True)
+                    self.peak = max(self.peak, len(self.mounts))
                 return mountpoint
 
             if proc.poll() is not None:
@@ -1953,7 +2218,8 @@ class FuseMountManager:
 
                 raise RuntimeError(f"buildbox-fuse exited early for {digest_value}: {stderr_text}")
 
-            time.sleep(0.05)
+            time.sleep(delay)
+            delay = min(delay * 2, MOUNT_POLL_MAX)
 
         proc.terminate()
         try:
@@ -1964,25 +2230,35 @@ class FuseMountManager:
 
         raise RuntimeError(f"timed out waiting for buildbox-fuse mount: {mountpoint}")
 
-    def cleanup(self):
-        for mountpoint, proc, mounted_by_us in list(self.mounts.values()):
+    def release(self, digest_value: str) -> None:
+        """Tear down one owned mount unless the user asked to keep it."""
+        with self.lock:
+            mountpoint, proc, mounted_by_us = self.mounts[digest_value]
             if not self.force_unmount and (not mounted_by_us or self.keep_mounts):
-                continue
+                return
+            del self.mounts[digest_value]
+        try:
             try:
-                try:
-                    unmount_mountpoint(mountpoint)
-                finally:
-                    if proc is not None:
-                        stop_process(proc)
+                # buildbox-fuse unmounts on SIGTERM, which avoids spawning a
+                # fusermount process per tree; fall back if the mount survives.
+                if proc is not None:
+                    stop_process(proc)
+            finally:
                 if os.path.ismount(mountpoint):
-                    print(
-                        f"WARNING: mount remains live after cleanup: {mountpoint}", file=sys.stderr
-                    )
-                    continue
-                Path(mountpoint).rmdir()
-                Path(f"{mountpoint}.fuse.log").unlink(missing_ok=True)
-            except Exception as exc:
-                print(f"WARNING: cleanup failed for {mountpoint}: {exc}", file=sys.stderr)
+                    unmount_mountpoint(mountpoint)
+            if os.path.ismount(mountpoint):
+                print(f"WARNING: mount remains live after cleanup: {mountpoint}", file=sys.stderr)
+                return
+            Path(mountpoint).rmdir()
+            Path(f"{mountpoint}.fuse.log").unlink(missing_ok=True)
+        except Exception as exc:
+            print(f"WARNING: cleanup failed for {mountpoint}: {exc}", file=sys.stderr)
+
+    def cleanup(self):
+        with self.lock:
+            digests = list(self.mounts)
+        for digest_value in digests:
+            self.release(digest_value)
 
 
 def stop_process(proc):
@@ -2158,8 +2434,10 @@ def make_selection(choice: str):
 def create_project(Project, context, args, fetch_subprojects=None):
     # BuildStream expects a callback here, not the CLI's boolean.
     def refuse_fetch(junctions):
+        names = ", ".join(sorted(element_label(j) for j in junctions)) or "unknown junction"
         raise RuntimeError(
-            "Subproject sources are missing; fetch junctions with bst first "
+            f"Subproject sources are missing for {names}; fetch them with bst "
+            "(e.g. bst source fetch on a junction or any element inside it) "
             "or pass --fetch-subprojects to allow fetching"
         )
 
@@ -2254,6 +2532,16 @@ def get_origin_for_element_path(
 # ---------------------------------------------------------------------------
 
 
+def peak_rss_mib() -> float:
+    """Peak resident set of this process only (not casd, buildbox-fuse or rg)."""
+    try:
+        import resource
+
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    except (ImportError, OSError):
+        return 0.0
+
+
 def print_stats(stats: dict) -> None:
     print("", file=sys.stderr)
     print("bst-source-grep statistics:", file=sys.stderr)
@@ -2268,6 +2556,10 @@ def print_stats(stats: dict) -> None:
 
     print(f"  unique trees:         {stats['trees']}", file=sys.stderr)
     print(f"  mounted trees:        {stats['mounted_trees']}", file=sys.stderr)
+    print(f"  peak mounts:          {stats['peak_mounts']}", file=sys.stderr)
+    print(f"  search jobs:          {stats['search_jobs']}", file=sys.stderr)
+    print(f"  fuse processes:       {stats['fuse_processes']}", file=sys.stderr)
+    print(f"  rg processes:         {stats['rg_processes']}", file=sys.stderr)
     print(f"  mount errors:         {stats['mount_errors']}", file=sys.stderr)
     print(f"  traversal errors:     {stats['traversal_errors']}", file=sys.stderr)
     print(f"  search errors:        {stats['search_errors']}", file=sys.stderr)
@@ -2276,10 +2568,18 @@ def print_stats(stats: dict) -> None:
     print(f"  path cache misses:    {stats['path_cache_misses']}", file=sys.stderr)
 
     print(f"  results:              {stats['results']}", file=sys.stderr)
+    print(f"  peak rss:             {stats['peak_rss_mib']:.1f} MiB", file=sys.stderr)
 
     print(f"  load time:            {format_seconds(stats['load_seconds'])}", file=sys.stderr)
+    # Parts of load time: project/element loading, then concurrent tree checks.
+    project_load = format_seconds(stats["project_load_seconds"])
+    print(f"  project load time:    {project_load}", file=sys.stderr)
+    print(f"  cache checks:         {stats['cache_checks']}", file=sys.stderr)
+    cache_check = format_seconds(stats["cache_check_seconds"])
+    print(f"  cache check time:     {cache_check}", file=sys.stderr)
     print(f"  mount time:           {format_seconds(stats['mount_seconds'])}", file=sys.stderr)
     print(f"  search time:          {format_seconds(stats['search_seconds'])}", file=sys.stderr)
+    print(f"  cleanup time:         {format_seconds(stats['cleanup_seconds'])}", file=sys.stderr)
     print(f"  total time:           {format_seconds(stats['total_seconds'])}", file=sys.stderr)
 
 
@@ -2290,7 +2590,7 @@ def print_stats(stats: dict) -> None:
 
 def _main() -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_intermixed_args()
 
     if args.find is None and args.pattern is None:
         parser.error("PATTERN is required unless --find is used")
@@ -2300,6 +2600,11 @@ def _main() -> int:
 
     if args.backend == "cas" and args.find is None:
         parser.error("--backend=cas currently only supports --find")
+
+    if args.jobs is None:
+        args.jobs = min(DEFAULT_JOBS, os.cpu_count() or 1)
+    elif args.jobs < 1:
+        parser.error("--jobs must be at least 1")
 
     for stream_name in (sys.stdout, sys.stderr):
         if hasattr(stream_name, "reconfigure"):
@@ -2356,6 +2661,10 @@ def _main() -> int:
         "duplicate_elements": 0,
         "trees": 0,
         "mounted_trees": 0,
+        "peak_mounts": 0,
+        "fuse_processes": 0,
+        "rg_processes": 0,
+        "search_jobs": 1,
         "mount_errors": 0,
         "traversal_errors": 0,
         "search_errors": 0,
@@ -2363,9 +2672,14 @@ def _main() -> int:
         "path_cache_misses": 0,
         "results": 0,
         "load_seconds": 0.0,
+        "project_load_seconds": 0.0,
+        "cache_check_seconds": 0.0,
+        "cache_checks": 0,
         "mount_seconds": 0.0,
         "search_seconds": 0.0,
+        "cleanup_seconds": 0.0,
         "total_seconds": 0.0,
+        "peak_rss_mib": 0.0,
     }
 
     try:
@@ -2414,14 +2728,37 @@ def _main() -> int:
                 ctx.load(args.config)
                 attach_dummy_message_handler(ctx)
 
-                stream = Stream(ctx, datetime.now())
+                # The scheduler only runs for --fetch-subprojects; it calls both
+                # callbacks unconditionally, so provide non-interactive ones.
+                stream = Stream(
+                    ctx,
+                    datetime.now(),
+                    interrupt_callback=lambda: stream.terminate(),
+                    ticker_callback=lambda: None,
+                )
                 stream.init()
                 project = create_project(Project, ctx, args, stream.fetch_subprojects)
                 stream.set_project(project)
 
                 elements = call_load_selection(stream, args.target, selection)
+                stats["project_load_seconds"] = time.monotonic() - load_start
+                phase_start = time.monotonic()
+                stats["cache_checks"] = prefetch_source_cache_state(
+                    elements, ctx, min(CACHE_CHECK_WORKERS, 2 * (os.cpu_count() or 1))
+                )
+                stats["cache_check_seconds"] = time.monotonic() - phase_start
 
                 cas_dir = None
+
+                if not use_fuse:
+                    # Optional fast path for CAS-direct traversal; fall back to
+                    # BuildStream directory objects when the layout is unknown.
+                    try:
+                        cas_dir = find_cas_dir(ctx, args)
+                    except Exception:
+                        cas_dir = None
+                    if cas_dir and not os.path.isdir(os.path.join(cas_dir, "objects")):
+                        cas_dir = None
 
                 if use_fuse:
                     cas_dir = find_cas_dir(ctx, args)
@@ -2492,6 +2829,7 @@ def _main() -> int:
                     if tree is None:
                         tree = {
                             "digest": digest_value,
+                            "digest_obj": digest_obj,
                             "directory": directory,
                             "elements": [],
                             "recipes_seen": set(),
@@ -2572,7 +2910,9 @@ def _main() -> int:
                         element_info["recipe"] if args.strip_junctions else element_info["label"]
                     )
 
-                    if dedup.duplicate("match", display, rel_path, line_number):
+                    # Distinct trees can share a stripped recipe name and path but
+                    # differ in content, so the line text is part of the identity.
+                    if dedup.duplicate("match", display, rel_path, (line_number, hash(text))):
                         return
 
                     if args.json:
@@ -2638,11 +2978,11 @@ def _main() -> int:
                             else:
                                 stats["path_cache_misses"] += 1
                                 path_iterator = iter_directory_and_cache(
-                                    directory,
+                                    tree_paths(tree, cas_dir),
                                     cache_file,
                                 )
                         else:
-                            path_iterator = iter_relative_paths(directory)
+                            path_iterator = tree_paths(tree, cas_dir)
 
                         with closing(iter_checked_paths(iter(path_iterator), tree, stats)) as paths:
                             for path in paths:
@@ -2657,6 +2997,9 @@ def _main() -> int:
                                         source_info_cache,
                                     )
                                     emit_file(element_info, path, origin)
+                        # Release per-tree BuildStream objects once traversed.
+                        tree["directory"] = None
+                        tree["gitreview"] = None
 
                     stats["search_seconds"] = time.monotonic() - search_start
 
@@ -2678,8 +3021,6 @@ def _main() -> int:
                 # FUSE mount phase
                 # ------------------------------------------------------------
 
-                mount_start = time.monotonic()
-
                 mount_manager = FuseMountManager(
                     buildbox_fuse=buildbox_fuse,
                     cas_dir=cas_dir,
@@ -2689,19 +3030,23 @@ def _main() -> int:
                     force_unmount=args.force_unmount,
                 )
 
-                mounted_trees = []
+                def emit_tree_matches(tree, matches):
+                    with closing(matches):
+                        for kind, rel_path, line_number, text in matches:
+                            for element_info in tree["elements"]:
+                                origin = get_origin_for_element_path(
+                                    element_info,
+                                    rel_path,
+                                    tree,
+                                    args,
+                                    source_info_cache,
+                                )
+                                if kind == "file":
+                                    emit_file(element_info, rel_path, origin)
+                                else:
+                                    emit_match(element_info, rel_path, line_number, text, origin)
 
-                for tree in trees.values():
-                    try:
-                        mountpoint = mount_manager.ensure_mount(tree["digest"])
-                    except Exception as exc:
-                        stats["mount_errors"] += 1
-                        print(
-                            f"ERROR: failed to mount tree {tree['digest']}: {exc}",
-                            file=sys.stderr,
-                        )
-                        continue
-
+                def attach_gitreview(tree, mountpoint):
                     tree["mountpoint"] = mountpoint
                     tree["gitreview"] = MountedGitreviewCache(
                         mountpoint,
@@ -2709,44 +3054,127 @@ def _main() -> int:
                         args.gitreview_nearest,
                     )
 
-                    mounted_trees.append(tree)
+                def release_tree(tree):
+                    phase_start = time.monotonic()
+                    tree["gitreview"] = None
+                    mount_manager.release(tree["digest"])
+                    return time.monotonic() - phase_start
 
-                    stats["mounted_trees"] += 1
+                tree_list = list(trees.values())
+                # A pool only helps with several trees; a single tree keeps the
+                # streaming path so output starts at once and needs no spool.
+                jobs = max(1, min(args.jobs, len(tree_list)))
+                # Phase times are summed across concurrent trees, so with more
+                # than one job they can exceed the wall-clock total.
+                stats["search_jobs"] = jobs
 
-                stats["mount_seconds"] = time.monotonic() - mount_start
+                if jobs == 1:
+                    # Each tree is mounted, searched and released before the next
+                    # one, streaming rg output as it arrives.
+                    for tree in tree_list:
+                        phase_start = time.monotonic()
+                        try:
+                            mountpoint = mount_manager.ensure_mount(tree["digest"])
+                        except Exception as exc:
+                            stats["mount_errors"] += 1
+                            print(
+                                f"ERROR: failed to mount tree {tree['digest']}: {exc}",
+                                file=sys.stderr,
+                            )
+                            continue
+                        finally:
+                            stats["mount_seconds"] += time.monotonic() - phase_start
 
-                if stats["mount_errors"] > 0:
-                    exit_code = 2
+                        stats["mounted_trees"] += 1
+                        attach_gitreview(tree, mountpoint)
 
-                if not mounted_trees:
-                    if exit_code != 2:
-                        exit_code = 1
-                    return exit_code
+                        phase_start = time.monotonic()
+                        try:
+                            stats["rg_processes"] += 1
+                            emit_tree_matches(tree, iter_mounted_matches(args, mountpoint))
+                        except SearchError as exc:
+                            stats["search_errors"] += 1
+                            print(f"ERROR: tree {tree['digest']}: {exc}", file=sys.stderr)
+                        finally:
+                            stats["search_seconds"] += time.monotonic() - phase_start
 
-                search_start = time.monotonic()
-                for tree in mounted_trees:
+                        stats["cleanup_seconds"] += release_tree(tree)
+                else:
+                    # Up to --jobs trees are mounted and searched concurrently into
+                    # spool files; output is emitted in tree order from this thread.
+                    # Without --origin, a worker releases its mount as soon as rg
+                    # finishes, so unmounting overlaps other trees' searches.
+                    runner = RgRunner()
+                    rg_cmd = rg_command(args)[0]
+                    keep_until_emitted = bool(args.origin)
+
+                    def search_tree(tree):
+                        result = {"error": None, "kind": None, "spool": None}
+                        phase_start = time.monotonic()
+                        try:
+                            mountpoint = mount_manager.ensure_mount(tree["digest"])
+                        except Exception as exc:
+                            result.update(kind="mount", error=str(exc))
+                            return result
+                        finally:
+                            result["mount_seconds"] = time.monotonic() - phase_start
+                        result["mountpoint"] = mountpoint
+                        phase_start = time.monotonic()
+                        spool = tempfile.TemporaryFile(mode="w+b")
+                        result["spool"] = spool
+                        try:
+                            runner.run(rg_cmd, mountpoint, spool)
+                        except SearchError as exc:
+                            result.update(kind="search", error=str(exc))
+                        except Exception:
+                            spool.close()
+                            raise
+                        finally:
+                            result["search_seconds"] = time.monotonic() - phase_start
+                            if not keep_until_emitted:
+                                result["cleanup_seconds"] = release_tree(tree)
+                        return result
+
                     try:
-                        with closing(iter_mounted_matches(args, tree["mountpoint"])) as matches:
-                            for kind, rel_path, line_number, text in matches:
-                                for element_info in tree["elements"]:
-                                    origin = get_origin_for_element_path(
-                                        element_info,
-                                        rel_path,
-                                        tree,
-                                        args,
-                                        source_info_cache,
+                        with closing(
+                            iter_ordered(tree_list, jobs, search_tree, runner.abort)
+                        ) as done:
+                            for tree, result in done:
+                                stats["mount_seconds"] += result["mount_seconds"]
+                                if result["kind"] == "mount":
+                                    stats["mount_errors"] += 1
+                                    print(
+                                        f"ERROR: failed to mount tree {tree['digest']}: "
+                                        f"{result['error']}",
+                                        file=sys.stderr,
                                     )
-                                    if kind == "file":
-                                        emit_file(element_info, rel_path, origin)
-                                    else:
-                                        emit_match(
-                                            element_info, rel_path, line_number, text, origin
-                                        )
-                    except SearchError as exc:
-                        stats["search_errors"] += 1
-                        print(f"ERROR: tree {tree['digest']}: {exc}", file=sys.stderr)
-
-                stats["search_seconds"] = time.monotonic() - search_start
+                                    continue
+                                stats["mounted_trees"] += 1
+                                stats["rg_processes"] += 1
+                                stats["search_seconds"] += result["search_seconds"]
+                                if keep_until_emitted:
+                                    attach_gitreview(tree, result["mountpoint"])
+                                phase_start = time.monotonic()
+                                try:
+                                    # Like the streaming path, emit what rg produced
+                                    # before reporting its failure.
+                                    emit_tree_matches(
+                                        tree, iter_spooled_matches(args, result["spool"])
+                                    )
+                                    if result["kind"] == "search":
+                                        raise SearchError(result["error"])
+                                except SearchError as exc:
+                                    stats["search_errors"] += 1
+                                    print(f"ERROR: tree {tree['digest']}: {exc}", file=sys.stderr)
+                                finally:
+                                    result["spool"].close()
+                                    stats["search_seconds"] += time.monotonic() - phase_start
+                                if keep_until_emitted:
+                                    stats["cleanup_seconds"] += release_tree(tree)
+                                else:
+                                    stats["cleanup_seconds"] += result["cleanup_seconds"]
+                    finally:
+                        runner.abort()
 
                 out.flush()
 
@@ -2779,6 +3207,8 @@ def _main() -> int:
                 try:
                     if mount_manager is not None:
                         mount_manager.cleanup()
+                        stats["peak_mounts"] = mount_manager.peak
+                        stats["fuse_processes"] = mount_manager.started
                 finally:
                     cleanup_stream(stream)
 
@@ -2805,6 +3235,7 @@ def _main() -> int:
         sys.stdout.flush()
 
         stats["total_seconds"] = time.monotonic() - start_time
+        stats["peak_rss_mib"] = peak_rss_mib()
 
         if args.stats:
             print_stats(stats)
