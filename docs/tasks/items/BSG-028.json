@@ -21,7 +21,7 @@
     ],
     "evidence": [
       "Branch claude/source-grep-all-options-eheilh (after PR #9).",
-      "test_declared_options_follow_local_includes, test_declared_options_report_recursive_include and the include fixture in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
+      "test_declared_options_follow_local_includes, test_declared_options_follow_symlinked_includes, test_declared_options_report_recursive_include and the include fixture in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
     ]
   }
 }

@@ -273,6 +273,27 @@ options:
     assert junction_includes == ["base.bst:include/shared.yml"]
 
 
+def test_declared_options_follow_symlinked_includes(tmp_path):
+    pytest.importorskip("buildstream")
+    project, outside = tmp_path / "p", tmp_path / "outside"
+    (project / "elements").mkdir(parents=True)
+    (project / "real").mkdir()
+    outside.mkdir()
+    (project / "real" / "a.yml").write_text(
+        "options:\n  a:\n    type: bool\n    description: a\n    default: false\n"
+    )
+    (outside / "b.yml").write_text(
+        "options:\n  b:\n    type: enum\n    description: b\n    values: [m, n]\n    default: m\n"
+    )
+    (project / "a-link.yml").symlink_to("real/a.yml")
+    (project / "out").symlink_to("../outside")
+    (project / "project.conf").write_text(
+        "name: sl\nmin-version: 2.8\nelement-path: elements\n(@):\n- a-link.yml\n- out/b.yml\n"
+    )
+    _, declarations, _ = adapter.declared_options(str(project))
+    assert [(d.name, d.values) for d in declarations] == [("a", ()), ("b", ("m", "n"))]
+
+
 def test_declared_options_report_recursive_include(tmp_path):
     pytest.importorskip("buildstream")
     (tmp_path / "elements").mkdir()
