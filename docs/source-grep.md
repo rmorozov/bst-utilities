@@ -29,6 +29,7 @@ bst-source-grep TARGET --find GLOB [options]
 | `--all-options`, `--max-option-sets N` | Search the union of sources reached under every combination of the toplevel project's options (see below); `-o` pins an option. Refuses more than N sets (default 64). |
 | `--list-options`, `--options-template` | Print the toplevel project's options (type, default, values, how a search uses them) or an `--options-file` template, then exit. No target is needed. |
 | `--options-file FILE` | `name: value` pins an option; `name: [a, b]` limits `--all-options` to those values. `-o` overrides the file. |
+| `--fetch-sources` | Fetch the selected sources into the local cache before searching, for every option set with `--all-options` (network; implies `--fetch-subprojects`). Never tracks. |
 | `--unlisted-options keep/vary` | With `--options-file`, options the file does not list keep their configured value (default `keep`), or `--all-options` tries every value of them (`vary`). |
 | `--config FILE` | BuildStream user configuration, including cache location and project overrides. |
 | `--glob GLOB`, `--exclude GLOB` | Repeatable file filters. Filename includes are ORed; excludes always win and also match ancestors. |
@@ -107,9 +108,25 @@ The product of value counts (2^N for N flags) must not exceed `--max-option-sets
 (default 64); it is computed before any value is enumerated, and otherwise the run
 fails before loading and names each option's count, so you can pin some with
 `-o`. After each load the resolved values are compared with the planned set; a
-mismatch is reported as a load failure for that set. Every combination costs a full project load; cache checks are
-shared, so a tree reached by several combinations, even a single new one, is checked
-and searched once.
+mismatch is reported as a load failure for that set. Cache checks are shared, so a
+tree reached by several combinations, even a single new one, is checked and searched
+once.
+
+Raising the cap is not free: every combination is a full BuildStream load of the
+target's graph, so time grows linearly with the number of sets. On a 500-element
+test project each set took about 2.8 s; 128 sets took about six minutes, and two
+billion would take about 180 years. After the first set a note estimates the time
+left, refreshed at most every 30 seconds. Memory stays roughly flat: each set's
+element graph is released once its trees are recorded (128 sets peaked at 212 MB
+on that project), except that `--origin` keeps the first graph to reach each
+element and tree. Sets are generated one at a time, and only the trees and their
+`option_sets` attribution lists are kept.
+
+`--fetch-sources` fetches the selected sources into the local cache for each
+combination before loading it, as `bst -o … source fetch --deps …` would, and
+implies `--fetch-subprojects`. It uses the network and is never implied. Sources
+are never tracked: refs can differ between combinations, so tracking each one would
+rewrite the same project files in turn.
 
 ### Narrowing long option lists
 
@@ -154,7 +171,7 @@ A combination rejected by a project `(!)` assertion is skipped with a `NOTE` and
 counted in `--stats`. Any other load failure, and every uncached or unresolved
 tree, is reported with its option set (`[options: arch=aarch64 debug=true]`) and
 makes the exit status 2. Fetch each combination you want covered, e.g.
-`bst -o arch aarch64 source fetch --deps all TARGET`.
+`bst -o arch aarch64 source fetch --deps all TARGET`, or pass `--fetch-sources`.
 
 Text output is unchanged; one record is printed per element and tree, however
 many combinations reached it. JSON records add `option_sets`, the list of

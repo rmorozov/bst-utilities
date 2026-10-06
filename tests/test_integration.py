@@ -621,8 +621,11 @@ config:
     assert "source tree is not cached: extra.bst [options: extra=true flavour=x]" in partial.stderr
     assert "variant.bst:onlyx.txt" in partial.stdout.splitlines()
 
-    fetch("-o", "extra", "true")
-    fetch("-o", "flavour", "y")
+    # --fetch-sources fetches every option set's sources before searching it.
+    fetched = search("--find", "*.txt", "--all-options", "--fetch-sources")
+    assert fetched.returncode == 0, fetched.stderr
+    assert "variant.bst:onlyy.txt" in fetched.stdout.splitlines()
+    assert "NOTE: loaded 1/4 option sets in " in fetched.stderr
     union = search("needle", "--all-options", "--json", "--stats")
     assert union.returncode == 0, union.stderr
     assert re.search(r"option sets loaded:\s+3\b", union.stderr), union.stderr

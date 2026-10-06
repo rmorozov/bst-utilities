@@ -41,6 +41,8 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     stream.init()
     project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
     stream.set_project(project)
+    if args.fetch_sources:
+        adapter.fetch_sources(stream, args.target, selection)
     return stream, project, adapter.call_load_selection(stream, args.target, selection)
 
 
@@ -176,7 +178,54 @@ def _plan_option_sets(args, stats):
         return None
 
     stats["option_sets_planned"] = size
-    return list(option_space.iter_option_sets(axes, declarations))
+    # Lazily: a large --max-option-sets must not materialize every set up front.
+    return option_space.iter_option_sets(axes, declarations)
+
+
+def _duration(seconds):
+    seconds = int(seconds + 0.5)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours}h{minutes:02d}m"
+    days = hours / 24
+    if days < 730:
+        return f"{days:.0f} days"
+    return f"{days / 365:.0f} years"
+
+
+class _Progress:
+    """Estimate and report how long the remaining option sets will take."""
+
+    INTERVAL = 30.0
+
+    def __init__(self, total, clock=time.monotonic, stream=None):
+        self.total = total
+        self.done = 0
+        self.clock = clock
+        self.stream = stream
+        self.start = clock()
+        self.last_report = self.start
+
+    def step(self):
+        self.done += 1
+        if self.total <= 1 or self.done >= self.total:
+            return
+        now = self.clock()
+        if self.done > 1 and now - self.last_report < self.INTERVAL:
+            return
+        self.last_report = now
+        elapsed = now - self.start
+        left = elapsed / self.done * (self.total - self.done)
+        print(
+            f"NOTE: loaded {self.done}/{self.total} option sets in {_duration(elapsed)}; "
+            f"about {_duration(left)} left",
+            file=self.stream or sys.stderr,
+        )
 
 
 def _report_option_set_failure(args, stats, option_set, exc):
@@ -317,8 +366,11 @@ def _main() -> int:
                     if option_sets is None:
                         exit_code = 2
                         return exit_code
+                progress = _Progress(stats.get("option_sets_planned", 1))
 
-                loaded = []
+                trees = {}
+                loaded_any = False
+                discover_seconds = 0.0
                 for option_set in option_sets:
                     try:
                         if option_set is None:
@@ -338,12 +390,15 @@ def _main() -> int:
                         if option_set is None:
                             raise
                         _report_option_set_failure(args, stats, option_set, exc)
+                        progress.step()
                         continue
                     if option_set is not None:
                         stats["option_sets"] += 1
                         _warn_unplanned_options(args, project)
                     elapsed = time.monotonic() - load_start
-                    stats["project_load_seconds"] = elapsed - stats["cache_check_seconds"]
+                    stats["project_load_seconds"] = (
+                        elapsed - stats["cache_check_seconds"] - discover_seconds
+                    )
 
                     phase_start = time.monotonic()
                     stats["cache_checks"] += source_cache.prefetch_source_cache_state(
@@ -353,9 +408,19 @@ def _main() -> int:
                         shared=args.all_options,
                     )
                     stats["cache_check_seconds"] += time.monotonic() - phase_start
-                    loaded.append((option_set, elements))
+                    phase_start = time.monotonic()
+                    catalogue.discover_trees(elements, args, stats, use_fuse, trees, option_set)
+                    discover_seconds += time.monotonic() - phase_start
+                    loaded_any = True
+                    if option_set is not None:
+                        # Keep only what the trees reference, so memory does not
+                        # grow with every option set.
+                        del project, elements
+                        adapter.release_load_state()
+                        del streams[1:]
+                    progress.step()
 
-                if not loaded:
+                if not loaded_any:
                     print("error: no option set could be loaded", file=sys.stderr)
                     exit_code = 2
                     return exit_code
@@ -383,10 +448,6 @@ def _main() -> int:
                         )
                         exit_code = 2
                         return exit_code
-
-                trees = {}
-                for option_set, elements in loaded:
-                    catalogue.discover_trees(elements, args, stats, use_fuse, trees, option_set)
 
                 stats["load_seconds"] = time.monotonic() - load_start
 

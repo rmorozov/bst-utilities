@@ -61,7 +61,8 @@ python scripts/tasks.py check
   future releases are verified.
 - Keep searches offline by default. Never invoke source track/fetch or connect
   remote caches implicitly. `--fetch-subprojects` is explicit authorization for
-  fetching junctions only.
+  fetching junctions only; `--fetch-sources` for fetching the selected sources.
+  Never track.
 - Integration tests must use temporary project/config/cache paths. Never modify
   the developer's BuildStream cache or real project refs in tests.
 - Stream large search output. Reap child processes on failure and interruption;

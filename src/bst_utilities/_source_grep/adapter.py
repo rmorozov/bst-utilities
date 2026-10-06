@@ -257,6 +257,24 @@ def call_load_selection(stream, target: str, selection):
     )
 
 
+def fetch_sources(stream, target: str, selection) -> None:
+    """Fetch the selection's sources into the local source cache (explicitly requested)."""
+    stream.fetch((target,), selection=selection)
+
+
+def release_load_state() -> None:
+    """
+    Drop BuildStream's global map of instantiated elements.
+
+    BuildStream keeps every Element it creates in a class-level map until a
+    session ends; with one load per option set that holds every set's graph.
+    Elements still referenced elsewhere stay valid.
+    """
+    from buildstream.element import Element
+
+    Element._reset_load_state()
+
+
 def cleanup_stream(stream) -> None:
     if stream is None:
         return

@@ -486,7 +486,7 @@ def test_cap_counts_only_what_the_options_file_varies(monkeypatch, capsys):
     args = cli.parse_args(["t.bst", "x", "--all-options", "--options-file", "o.yml"])
     assert application._prepare_options(args) is None
     stats = {}
-    sets = application._plan_option_sets(args, stats)
+    sets = list(application._plan_option_sets(args, stats))
     assert sets == [{"arch": "x86_64"}, {"arch": "aarch64"}]
     assert stats["option_sets_planned"] == 2
     err = capsys.readouterr().err
@@ -608,3 +608,30 @@ def test_template_switch_renders_existing_restrictions(monkeypatch, capsys):
     args = cli.parse_args(["--options-template", "--options-file", "o.yml"])
     assert application._describe_options(args) == 0
     assert "\n  arch: [riscv64]\n" in capsys.readouterr().out
+
+
+def test_progress_estimates_remaining_option_sets():
+    import io
+
+    from bst_utilities._source_grep import application
+
+    now = [0.0]
+    out = io.StringIO()
+    progress = application._Progress(1000, clock=lambda: now[0], stream=out)
+    now[0] = 3.0
+    progress.step()  # the first set always reports an estimate
+    for _ in range(9):
+        now[0] += 3.0
+        progress.step()  # within the interval: quiet
+    now[0] += 3.0
+    progress.step()
+    assert out.getvalue().splitlines() == [
+        "NOTE: loaded 1/1000 option sets in 3s; about 49m57s left",
+        "NOTE: loaded 11/1000 option sets in 33s; about 49m27s left",
+    ]
+    assert application._duration(2e9 * 2.8) == "178 years"
+
+    quiet = io.StringIO()
+    single = application._Progress(1, clock=lambda: 0.0, stream=quiet)
+    single.step()
+    assert quiet.getvalue() == ""
