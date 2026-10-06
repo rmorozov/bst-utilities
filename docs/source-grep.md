@@ -156,3 +156,9 @@ load and the rest casd verifying the ~600k file blobs of 468 trees.
 
 See [the task registry](tasks/README.md) for prioritized next steps, including
 benchmarking, module boundaries, bounded mounts and improved diagnostics.
+
+## Implementation layout
+
+See [the development guide](source-grep-development.md) for module boundaries,
+resource ownership and validation. The public command and module entry point
+remain unchanged.

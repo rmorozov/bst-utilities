@@ -5,7 +5,8 @@ Read README.md and the affected tool's document in docs/ before changing behavio
 
 ## Structure
 
-- `src/bst_utilities/`: Python modules, one command per tool. Keep shared code here
+- `src/bst_utilities/`: command entry points; `_source_grep/` holds the source-grep
+  implementation (see `docs/source-grep-development.md`). Keep shared code here
   only when at least two tools actually need it.
 - `pyproject.toml`: command entry points, dependency extras, validation settings.
 - `tests/`: regression tests and isolated integration fixtures.
