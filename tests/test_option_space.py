@@ -37,7 +37,7 @@ def test_application_rejects_flags_explosion_before_enumerating(monkeypatch, cap
     from bst_utilities._source_grep import application
 
     many = Declaration("f", "flags", tuple(f"flag{i}" for i in range(40)), "")
-    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", [many]))
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", [many], []))
     monkeypatch.setattr(
         option_space, "option_values", lambda d: pytest.fail("enumerated before cap")
     )
@@ -211,7 +211,7 @@ options:
     type: element-mask
     description: masked elements
 """)
-    name, declarations = adapter.declared_options(str(tmp_path / "elements" / "sub"))
+    name, declarations, _ = adapter.declared_options(str(tmp_path / "elements" / "sub"))
     assert name == "opts"
     by_name = {d.name: d for d in declarations}
     assert [d.name for d in declarations] == ["debug", "machine", "feats", "mask"]
@@ -219,6 +219,67 @@ options:
     assert by_name["machine"].type == "arch" and by_name["machine"].values == ("riscv64",)
     assert by_name["feats"].default == "a,b"
     assert by_name["mask"].values == ("a.bst",)
+
+
+def test_declared_options_follow_local_includes(tmp_path):
+    pytest.importorskip("buildstream")
+    (tmp_path / "elements").mkdir()
+    (tmp_path / "include" / "more").mkdir(parents=True)
+    (tmp_path / "project.conf").write_text("""name: incl
+min-version: 2.8
+element-path: elements
+(@):
+- include/options.yml
+- base.bst:include/shared.yml
+options:
+  (@): include/more/inner.yml
+  local:
+    type: bool
+    description: declared here
+    default: false
+""")
+    (tmp_path / "include" / "options.yml").write_text("""(@): include/more/nested.yml
+options:
+  flavour:
+    type: enum
+    description: from an include
+    values: [x, y]
+    default: x
+""")
+    (tmp_path / "include" / "more" / "nested.yml").write_text("""options:
+  flavour:
+    type: enum
+    description: overridden by the including file
+    values: [unused]
+    default: unused
+  nested:
+    type: flags
+    description: from a nested include
+    values: [p, q]
+""")
+    (tmp_path / "include" / "more" / "inner.yml").write_text("""inner:
+  type: enum
+  description: included inside the options mapping
+  values: [m, n]
+  default: n
+""")
+    name, declarations, junction_includes = adapter.declared_options(str(tmp_path))
+    assert name == "incl"
+    by_name = {d.name: d for d in declarations}
+    assert set(by_name) == {"local", "flavour", "nested", "inner"}
+    assert by_name["flavour"].values == ("x", "y") and by_name["flavour"].default == "x"
+    assert by_name["nested"].type == "flags" and by_name["nested"].values == ("p", "q")
+    assert by_name["inner"].default == "n"
+    assert junction_includes == ["base.bst:include/shared.yml"]
+
+
+def test_declared_options_report_recursive_include(tmp_path):
+    pytest.importorskip("buildstream")
+    (tmp_path / "elements").mkdir()
+    (tmp_path / "project.conf").write_text("name: loop\nmin-version: 2.8\n(@): a.yml\n")
+    (tmp_path / "a.yml").write_text("(@): a.yml\n")
+    with pytest.raises(Exception, match="recursively include"):
+        adapter.declared_options(str(tmp_path))
 
 
 def test_strip_dedup_keeps_json_attribution_of_distinct_trees(capsys):
@@ -388,7 +449,7 @@ def test_cli_describe_modes_need_no_target():
 def test_prepare_merges_file_and_command_line(monkeypatch, tmp_path, capsys, all_options):
     from bst_utilities._source_grep import application
 
-    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations()))
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations(), []))
     raw = {"debug": "true", "arch": ["aarch64"], "mode": ["", "x"], "feats": []}
     monkeypatch.setattr(adapter, "load_options_file", lambda path: raw)
     argv = ["t.bst", "--find", "*", "--options-file", "o.yml", "-o", "mode", "x"]
@@ -471,7 +532,7 @@ def test_template_switch_renders_existing_restrictions(monkeypatch, capsys):
     from bst_utilities._source_grep import application
 
     monkeypatch.setattr(adapter, "load_api", lambda: None)
-    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations()))
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations(), []))
     monkeypatch.setattr(adapter, "load_options_file", lambda path: {"arch": ["riscv64"]})
     args = cli.parse_args(["--options-template", "--options-file", "o.yml"])
     assert application._describe_options(args) == 0

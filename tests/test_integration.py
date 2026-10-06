@@ -525,9 +525,19 @@ options:
 """,
         "sub/subx/subx.txt": "needle subx\n",
         "sub/suby/suby.txt": "needle suby\n",
+        "sub/include/shared.yml": """options:
+  shared:
+    type: bool
+    description: declared in a junction include
+    default: false
+""",
+        # extra comes from a local include, shared from a junction include.
         "project.conf": """name: main
 min-version: 2.8
 element-path: elements
+(@):
+- include/options.yml
+- sub.bst:include/shared.yml
 options:
   flavour:
     type: enum
@@ -535,6 +545,8 @@ options:
     values: [x, y]
     default: x
     variable: flavour
+""",
+        "include/options.yml": """options:
   extra:
     type: bool
     description: adds a dependency
@@ -605,8 +617,8 @@ config:
 
     partial = search("--find", "*.txt", "--all-options")
     assert partial.returncode == 2, partial.stderr
-    assert "NOTE: skipped option set [flavour=y extra=true]" in partial.stderr
-    assert "source tree is not cached: extra.bst [options: flavour=x extra=true]" in partial.stderr
+    assert "NOTE: skipped option set [extra=true flavour=y]" in partial.stderr
+    assert "source tree is not cached: extra.bst [options: extra=true flavour=x]" in partial.stderr
     assert "variant.bst:onlyx.txt" in partial.stdout.splitlines()
 
     fetch("-o", "extra", "true")
@@ -615,6 +627,10 @@ config:
     assert union.returncode == 0, union.stderr
     assert re.search(r"option sets loaded:\s+3\b", union.stderr), union.stderr
     assert re.search(r"option sets skipped:\s+1\b", union.stderr), union.stderr
+    # The locally included option is enumerated; the junction-included one is reported.
+    assert "option extra" not in union.stderr
+    assert "includes sub.bst:include/shared.yml from a junction" in union.stderr
+    assert "option shared is declared in a file included from a junction" in union.stderr
     records = [json.loads(line) for line in union.stdout.splitlines()]
     reached = {r["path"]: r["option_sets"] for r in records}
     x, xe, y = (
@@ -623,7 +639,7 @@ config:
         {"flavour": "y", "extra": "false"},
     )
     assert reached == {
-        "base.txt": [x, xe, y],
+        "base.txt": [x, y, xe],
         "onlyx.txt": [x, xe],
         "onlyy.txt": [y],
         "extra.txt": [xe],
@@ -638,7 +654,7 @@ config:
 
     capped = search("--find", "*.txt", "--all-options", "--max-option-sets", "3")
     assert capped.returncode == 2
-    assert "would load 4 option sets (flavour=2, extra=2)" in capped.stderr
+    assert "would load 4 option sets (extra=2, flavour=2)" in capped.stderr
     assert capped.stdout == ""
 
     # Template -> edited options file -> search: narrow flavour, pin extra.

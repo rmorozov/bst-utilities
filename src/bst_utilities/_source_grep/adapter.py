@@ -288,9 +288,11 @@ def declared_options(directory):
 
     Parses project.conf with BuildStream's own YAML and option classes, without
     resolving values: an arch/os option whose host default is not listed would
-    otherwise fail before any combination could be chosen. Options declared
-    through includes are not visible here; see project_option_names().
-    Returns (project name, declarations).
+    otherwise fail before any combination could be chosen. `(@)` includes of
+    the project's own files are followed as BuildStream's first loading pass
+    does. Files included from a junction need that subproject loaded, so
+    options declared there are not visible here; see project_option_names().
+    Returns (project name, declarations, junction includes left unread).
     """
     from buildstream import _yaml, utils
     from buildstream._options import OptionPool
@@ -300,6 +302,7 @@ def declared_options(directory):
         raise RuntimeError(f"no project.conf found in {directory!r} or its parents")
 
     node = _yaml.load(os.path.join(project_dir, "project.conf"), shortname="project.conf")
+    junction_includes = _process_local_includes(node, project_dir)
     pool = OptionPool(os.path.join(project_dir, node.get_str("element-path", default=".")))
     pool.load(node.get_mapping("options", default={}))
 
@@ -311,7 +314,39 @@ def declared_options(directory):
         declarations.append(
             Declaration(name, option.OPTION_TYPE, values, _option_cli_value(option))
         )
-    return node.get_str("name"), declarations
+    return node.get_str("name"), declarations, junction_includes
+
+
+def _process_local_includes(node, project_dir):
+    """
+    Compose `(@)` includes of project-local files into `node`, in place.
+
+    Uses BuildStream's own Includes, which resolves paths, nesting, recursion
+    errors and composition order. Junction includes are recorded and replaced
+    with nothing instead of loading the subproject. Returns their names.
+    """
+    from buildstream._includes import Includes
+    from buildstream.node import Node
+
+    junction_includes = []
+
+    class _Project:
+        directory = project_dir
+        junction = None
+
+    class _Loader:
+        project = _Project()
+
+    class _LocalIncludes(Includes):
+        def _include_file(self, include, loader):
+            name = include.as_str()
+            if ":" in name:
+                junction_includes.append(name)
+                return Node.from_dict({}), f"junction include {name}", loader
+            return super()._include_file(include, loader)
+
+    _LocalIncludes(_Loader()).process(node, process_project_options=False)
+    return junction_includes
 
 
 def _option_cli_value(option):

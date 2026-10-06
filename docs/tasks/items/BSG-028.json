@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-028",
+    "tool": "bst-source-grep",
+    "title": "Read option declarations from project.conf includes",
+    "area": "correctness",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Options declared in files that project.conf pulls in with (@) were invisible to --all-options, --list-options and --options-template, so they were neither enumerated nor templated.",
+    "proposal": "Compose project-local (@) includes with BuildStream's own Includes before reading declarations, matching its first loading pass; report junction includes, whose options need the subproject loaded.",
+    "acceptance": [
+      "Options declared in local includes (top level, inside options:, nested) are listed, templated and enumerated, with the including file overriding the included one as in BuildStream.",
+      "Junction includes are not loaded before the search; a note names each, and options they declare are reported after loading as held.",
+      "Recursive includes fail with BuildStream's error."
+    ],
+    "depends_on": [
+      "BSG-026",
+      "BSG-027"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (after PR #9).",
+      "test_declared_options_follow_local_includes, test_declared_options_report_recursive_include and the include fixture in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
+    ]
+  }
+}

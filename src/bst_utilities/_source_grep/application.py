@@ -73,7 +73,15 @@ def _prepare_options(args):
     overrides, which the command line cannot express) and args.restrictions.
     Returns an exit status on error, else None.
     """
-    args.project_name, args.declarations = adapter.declared_options(args.directory)
+    args.project_name, args.declarations, junction_includes = adapter.declared_options(
+        args.directory
+    )
+    for name in junction_includes:
+        print(
+            f"NOTE: project.conf includes {name} from a junction; options declared "
+            "there are not listed or enumerated",
+            file=sys.stderr,
+        )
     args.flags_options = {d.name for d in args.declarations if d.type in option_space.SET_TYPES}
     pins, restrictions = {}, {}
     if args.options_file:
@@ -172,12 +180,12 @@ def _report_option_set_failure(args, stats, option_set, exc):
 
 
 def _warn_unplanned_options(args, project):
-    """Options declared through includes were not enumerated; say so once each."""
+    """Options declared in junction includes were not enumerated; say so once each."""
     for name in sorted(adapter.project_option_names(project) - args.planned_options):
         args.planned_options.add(name)
         print(
-            f"NOTE: option {name} is not declared in project.conf directly and was "
-            "not enumerated; pin it with -o to search another value",
+            f"NOTE: option {name} is declared in a file included from a junction "
+            "and was not enumerated; pin it with -o to search another value",
             file=sys.stderr,
         )
 
