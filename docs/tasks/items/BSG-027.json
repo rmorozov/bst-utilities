@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-027",
+    "tool": "bst-source-grep",
+    "title": "List, template and narrow project options for --all-options",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Projects with many options exceed the --all-options cap, and pinning each option with -o is tedious and drops the sources other values reach.",
+    "proposal": "Add --list-options and --options-template to show every toplevel option with its type, default and values, and --options-file where a value pins an option and a list limits --all-options to those values.",
+    "acceptance": [
+      "--list-options and --options-template work without a target and reflect -o and --options-file.",
+      "The template lists every option commented out with its values; uncommenting entries yields a valid options file.",
+      "A file value pins an option; a list (list of sets for flags/element-mask) limits --all-options; -o overrides the file; invalid names or values fail before loading.",
+      "Without --all-options, one-value lists pin and longer lists are rejected; existing searches without these options are unchanged."
+    ],
+    "depends_on": [
+      "BSG-026"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (after PR #8).",
+      "Unit tests in tests/test_option_space.py and the template/file round trip in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
+    ]
+  }
+}

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import itertools
+import textwrap
 from dataclasses import dataclass
 
 # Option types whose value space is enumerated. element-mask values are every
 # .bst file under the element path, so its power set is held at the default.
 ENUMERATED_TYPES = ("bool", "enum", "arch", "os", "flags")
+
+# Types whose value is a set of names; "" is the empty set.
+SET_TYPES = ("flags", "element-mask")
 
 DEFAULT_MAX_OPTION_SETS = 64
 
@@ -28,6 +32,7 @@ class Axis:
 
     declaration: Declaration
     count: int
+    choices: tuple | None = None  # restricted by an options file
 
     @property
     def name(self):
@@ -35,6 +40,8 @@ class Axis:
 
     @property
     def values(self):
+        if self.choices is not None:
+            return self.choices
         return option_values(self.declaration)
 
 
@@ -68,19 +75,25 @@ def option_values(declaration):
     return ()
 
 
-def plan(declarations, pinned):
+def plan(declarations, pinned, restrictions=None):
     """
     Split declarations into enumerated axes and held option names.
 
-    `pinned` holds names fixed with -o; those and element-mask options are
-    held. Returns (axes, held) where held is a list of (name, reason). Values
-    are not enumerated here, so space_size() can enforce a cap first.
+    `pinned` holds names fixed with -o or an options file; those and
+    element-mask options are held. `restrictions` maps names to the only
+    values to enumerate. Returns (axes, held) where held is a list of
+    (name, reason). Values are not enumerated here, so space_size() can
+    enforce a cap first.
     """
+    restrictions = restrictions or {}
     axes = []
     held = []
     for declaration in declarations:
         if declaration.name in pinned:
-            held.append((declaration.name, "pinned with -o"))
+            held.append((declaration.name, "pinned"))
+        elif declaration.name in restrictions:
+            choices = restrictions[declaration.name]
+            axes.append(Axis(declaration, len(choices), choices))
         elif declaration.type not in ENUMERATED_TYPES:
             held.append((declaration.name, f"{declaration.type} options are not enumerated"))
         else:
@@ -146,3 +159,153 @@ def label(option_set):
     if not option_set:
         return "project defaults"
     return " ".join(f"{name}={value}" for name, value in option_set.items())
+
+
+class OptionsFileError(ValueError):
+    pass
+
+
+def _set_value(declaration, raw):
+    """A flags/element-mask value: a list of names or a comma-separated string."""
+    if isinstance(raw, str):
+        names = [name for name in "".join(raw.split()).split(",") if name]
+    elif isinstance(raw, list) and all(isinstance(name, str) for name in raw):
+        names = raw
+    else:
+        raise OptionsFileError(f"{declaration.name}: expected a list of names, got {raw!r}")
+    unknown = sorted(set(names) - set(declaration.values))
+    if unknown:
+        raise OptionsFileError(f"{declaration.name}: unknown value(s) {', '.join(unknown)}")
+    return ",".join(sorted(set(names)))
+
+
+def _scalar_value(declaration, raw):
+    if not isinstance(raw, str):
+        raise OptionsFileError(f"{declaration.name}: expected one value, got {raw!r}")
+    if declaration.type == "bool":
+        value = raw.lower()
+        if value not in ("true", "false"):
+            raise OptionsFileError(f"{declaration.name}: expected true or false, got {raw!r}")
+        return value
+    if raw not in declaration.values:
+        valid = ", ".join(repr(v) for v in declaration.values)
+        raise OptionsFileError(f"{declaration.name}: {raw!r} is not one of {valid}")
+    return raw
+
+
+def parse_options_file(options, declarations):
+    """
+    Turn an options file's `options` mapping into (pins, restrictions).
+
+    A single value pins an option. A list of values (for flags and
+    element-mask, a list of lists) restricts --all-options to those values.
+    Values are returned in the command-line form option_values() uses.
+    """
+    if options is None:
+        return {}, {}
+    if not isinstance(options, dict):
+        raise OptionsFileError("'options' must be a mapping of option names to values")
+
+    by_name = {declaration.name: declaration for declaration in declarations}
+    pins, restrictions = {}, {}
+    for name, raw in options.items():
+        declaration = by_name.get(name)
+        if declaration is None:
+            raise OptionsFileError(f"{name}: not an option declared in project.conf")
+        if declaration.type in SET_TYPES:
+            if isinstance(raw, list) and raw and all(isinstance(item, list) for item in raw):
+                values = [_set_value(declaration, item) for item in raw]
+            else:
+                pins[name] = _set_value(declaration, raw)
+                continue
+        elif isinstance(raw, list):
+            values = [_scalar_value(declaration, item) for item in raw]
+        else:
+            pins[name] = _scalar_value(declaration, raw)
+            continue
+        if not values:
+            raise OptionsFileError(f"{name}: an empty list selects no value")
+        restrictions[name] = tuple(dict.fromkeys(values))
+    return pins, restrictions
+
+
+def _describe(declaration):
+    """Type, default and possible values of one option, as comment lines."""
+    default = declaration.default
+    if declaration.type in SET_TYPES:
+        default = f"[{default}]"
+    lines = [f"{declaration.name} ({declaration.type}), default: {default}"]
+    if declaration.type == "bool":
+        values = "true, false"
+    elif declaration.type in SET_TYPES:
+        values = f"any set of: {', '.join(declaration.values)}"
+    else:
+        values = ", ".join(repr(v) if v == "" else v for v in declaration.values)
+    lines += textwrap.wrap(f"values: {values}", 76, subsequent_indent="  ")
+    if declaration.type == "element-mask":
+        lines.append("not enumerated by --all-options; pin it or list the sets to search")
+    return lines
+
+
+def _yaml_value(declaration, value):
+    if declaration.type in SET_TYPES:
+        return "[" + ", ".join(value.split(",") if value else []) + "]"
+    if value == "" or value[:1] in "[{&*!|>'\"%@`#" or ":" in value:
+        return repr(value)
+    return value
+
+
+def render_template(project_name, declarations, pinned):
+    """
+    An options file listing every option, commented out unless pinned.
+
+    Uncommenting `name: value` pins an option; `name: [a, b]` limits
+    --all-options to those values.
+    """
+    lines = [
+        f"# Options of BuildStream project '{project_name}' for bst-source-grep.",
+        "# Pass this file with --options-file. Uncomment a line to use it:",
+        "#   name: value       pin the option to one value (not enumerated)",
+        "#   name: [v1, v2]    make --all-options enumerate only these values",
+        "# Each example lists every value; delete the ones you do not need.",
+        "# A flags value is a list of flags; a list of such lists limits",
+        "# --all-options to those sets. Commented options are enumerated by",
+        "# --all-options and otherwise keep their configured value.",
+        "# -o KEY VALUE on the command line overrides this file.",
+        "options:",
+    ]
+    for declaration in declarations:
+        lines.append("")
+        lines += [f"  # {line}" for line in _describe(declaration)]
+        name = declaration.name
+        if name in pinned:
+            lines.append(f"  {name}: {_yaml_value(declaration, pinned[name])}")
+        elif declaration.type in SET_TYPES:
+            lines.append(f"  # {name}: {_yaml_value(declaration, declaration.default or '')}")
+        else:
+            # Every value: delete the ones not to search, or keep one to pin it.
+            values = ", ".join(_yaml_value(declaration, v) for v in option_values(declaration))
+            lines.append(f"  # {name}: [{values}]")
+    return "\n".join(lines) + "\n"
+
+
+def render_listing(declarations, pinned, restrictions=None):
+    """Human-readable list of options, their values and how a search uses them."""
+    restrictions = restrictions or {}
+    lines = []
+    for declaration in declarations:
+        name = declaration.name
+        described = _describe(declaration)
+        if name in pinned:
+            state = f"pinned to {pinned[name]!r}"
+        elif name in restrictions:
+            state = f"--all-options tries {len(restrictions[name])}: " + ", ".join(
+                repr(v) for v in restrictions[name]
+            )
+        elif declaration.type in ENUMERATED_TYPES:
+            state = f"--all-options tries {value_count(declaration)}"
+        else:
+            state = "held"
+        lines.append(f"{described[0]}  [{state}]")
+        lines += [f"    {line}" for line in described[1:]]
+    return "\n".join(lines) + ("\n" if lines else "")

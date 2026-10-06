@@ -389,3 +389,17 @@ def reset_toplevel_project(context) -> None:
 def is_user_assertion(exc) -> bool:
     """Whether a load failed on a project `(!)` assertion for these options."""
     return getattr(getattr(exc, "reason", None), "name", None) == "USER_ASSERTION"
+
+
+def load_options_file(path):
+    """The `options` mapping of an --options-file, as plain Python values."""
+    from buildstream import _yaml
+
+    node = _yaml.load(os.path.abspath(path), shortname=os.path.basename(path))
+    data = node.strip_node_info()
+    unknown = sorted(set(data) - {"options"})
+    if unknown:
+        from .option_space import OptionsFileError
+
+        raise OptionsFileError(f"unknown top-level key(s): {', '.join(unknown)}")
+    return data.get("options")

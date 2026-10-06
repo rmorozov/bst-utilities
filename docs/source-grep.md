@@ -27,6 +27,8 @@ bst-source-grep TARGET --find GLOB [options]
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |
 | `--all-options`, `--max-option-sets N` | Search the union of sources reached under every combination of the toplevel project's options (see below); `-o` pins an option. Refuses more than N sets (default 64). |
+| `--list-options`, `--options-template` | Print the toplevel project's options (type, default, values, how a search uses them) or an `--options-file` template, then exit. No target is needed. |
+| `--options-file FILE` | `name: value` pins an option; `name: [a, b]` limits `--all-options` to those values. `-o` overrides the file. |
 | `--config FILE` | BuildStream user configuration, including cache location and project overrides. |
 | `--glob GLOB`, `--exclude GLOB` | Repeatable file filters. Filename includes are ORed; excludes always win and also match ancestors. |
 | `-i`, `-F`, `-n`, `-l` | Ignore case, literal content pattern, show line numbers, filenames with content matches. `-i` also applies to the find pattern. |
@@ -102,6 +104,37 @@ fails before loading and names each option's count, so you can pin some with
 mismatch is reported as a load failure for that set. Every combination costs a full project load; cache checks are
 shared, so a tree reached by several combinations, even a single new one, is checked
 and searched once.
+
+### Narrowing long option lists
+
+Pinning every option with `-o` does not scale, and pinning loses the sources the
+other values reach. Instead, list or template the options and edit a file:
+
+```sh
+bst-source-grep --list-options
+bst-source-grep --options-template > search-options.yml
+$EDITOR search-options.yml
+bst-source-grep TARGET PATTERN --all-options --options-file search-options.yml
+```
+
+The template has an `options:` mapping with every option commented out, each
+under a comment giving its type, default and values. The example line lists every
+value (`# arch: [x86_64, aarch64, riscv64]`); uncomment it and delete the values
+you do not need. In the file:
+
+| Entry | Meaning |
+| --- | --- |
+| `name: value` | Pin to one value; not enumerated or shown in `option_sets` |
+| `name: [v1, v2]` | `--all-options` enumerates only these values (shown in `option_sets`) |
+| `flags: [a, b]` or `'a,b'` | Pin a flags or element-mask option to that set (`[]` is the empty set) |
+| `flags: [[a], [a, b], []]` | `--all-options` enumerates only these sets |
+
+`-o KEY VALUE` overrides the file for that option. Without `--all-options`, a
+one-value list is a pin and a longer list is an error. `--list-options` also
+reads `-o` and `--options-file` and shows how many values each option
+contributes, so you can see the product before running a search. When the cap is
+exceeded, the error points to these options. Values are validated against
+`project.conf`; unknown names or values fail before loading.
 
 A combination rejected by a project `(!)` assertion is skipped with a `NOTE` and
 counted in `--stats`. Any other load failure, and every uncached or unresolved

@@ -44,6 +44,8 @@ bst-source-grep default_elements.bst 'pthread_create' --all-options --json
 
 `--all-options` searches the union of sources reached under every combination of
 the toplevel project's options, attributing each JSON record to its option sets.
+`--options-template` writes a file listing every option and its values; edit it
+to pin or narrow options and pass it with `--options-file`.
 
 Source tracking is optional when you want to update refs; this helper never
 tracks or fetches element sources. Missing caches produce exit status 2.

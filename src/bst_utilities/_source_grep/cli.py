@@ -47,9 +47,28 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {DEFAULT_MAX_OPTION_SETS})"
         ),
     )
+    parser.add_argument(
+        "--options-file",
+        metavar="FILE",
+        help=(
+            "YAML options file: 'name: value' pins an option, 'name: [a, b]' limits "
+            "--all-options to those values; -o overrides it"
+        ),
+    )
+    parser.add_argument(
+        "--list-options",
+        action="store_true",
+        help="list the project's options, their values and pins, then exit",
+    )
+    parser.add_argument(
+        "--options-template",
+        action="store_true",
+        help="print an --options-file template with every option commented out, then exit",
+    )
 
     parser.add_argument(
         "target",
+        nargs="?",
         help="BuildStream element, e.g. default_elements.bst",
     )
     parser.add_argument(
@@ -274,6 +293,16 @@ def build_parser() -> argparse.ArgumentParser:
 def parse_args(argv=None):
     parser = build_parser()
     args = parser.parse_intermixed_args(argv)
+
+    if args.list_options and args.options_template:
+        parser.error("--list-options cannot be used together with --options-template")
+
+    if args.list_options or args.options_template:
+        # These describe the project; a target or pattern is not needed.
+        return args
+
+    if args.target is None:
+        parser.error("TARGET is required")
 
     if args.find is None and args.pattern is None:
         parser.error("PATTERN is required unless --find is used")

@@ -47,7 +47,7 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
 def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set):
     """Load one --all-options set as the toplevel project and check it took effect."""
     adapter.reset_toplevel_project(ctx)
-    empty = option_space.empty_flags(option_set, args.flags_options)
+    empty = option_space.empty_flags(option_set, args.flags_options) + args.pinned_empty
     with adapter.empty_flags_overrides(ctx, args.project_name, empty):
         _, project, elements = _load_selection(
             ctx,
@@ -64,16 +64,79 @@ def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set)
     return project, elements
 
 
+def _prepare_options(args):
+    """
+    Read the declarations and merge --options-file with -o.
+
+    Sets args.option to the pins passed on the command line (file pins first,
+    so -o wins), args.pinned_empty to pinned empty flags (applied as
+    overrides, which the command line cannot express) and args.restrictions.
+    Returns an exit status on error, else None.
+    """
+    args.project_name, args.declarations = adapter.declared_options(args.directory)
+    args.flags_options = {d.name for d in args.declarations if d.type in option_space.SET_TYPES}
+    pins, restrictions = {}, {}
+    if args.options_file:
+        try:
+            raw = adapter.load_options_file(args.options_file)
+            pins, restrictions = option_space.parse_options_file(raw, args.declarations)
+        except option_space.OptionsFileError as exc:
+            print(f"error: {args.options_file}: {exc}", file=sys.stderr)
+            return 2
+
+    for name, value in args.option:
+        pins[name] = value
+        restrictions.pop(name, None)
+
+    if not (args.all_options or args.list_options or args.options_template):
+        # Without enumeration, a one-value list is just a pin.
+        for name in [name for name, values in restrictions.items() if len(values) == 1]:
+            pins[name] = restrictions.pop(name)[0]
+
+    if restrictions and not (args.all_options or args.list_options or args.options_template):
+        names = ", ".join(restrictions)
+        print(
+            f"error: {args.options_file} lists several values for {names}; "
+            "that needs --all-options",
+            file=sys.stderr,
+        )
+        return 2
+
+    args.pinned_empty = [
+        name for name, value in pins.items() if value == "" and name in args.flags_options
+    ]
+    args.option = [(name, value) for name, value in pins.items() if name not in args.pinned_empty]
+    args.pins = pins
+    args.restrictions = restrictions
+    return None
+
+
+def _describe_options(args):
+    """--list-options and --options-template: print and exit."""
+    try:
+        adapter.load_api()
+        status = _prepare_options(args)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if status is not None:
+        return status
+    if args.options_template:
+        text = option_space.render_template(args.project_name, args.declarations, args.pins)
+    else:
+        text = option_space.render_listing(args.declarations, args.pins, args.restrictions)
+    sys.stdout.write(text)
+    return 0
+
+
 def _plan_option_sets(args, stats):
     """Return the option sets to load for --all-options, or None on error."""
-    args.project_name, declarations = adapter.declared_options(args.directory)
-    args.flags_options = {d.name for d in declarations if d.type == "flags"}
-    pinned = dict(args.option)
-    axes, held = option_space.plan(declarations, pinned)
-    args.planned_options = {d.name for d in declarations} | set(pinned)
+    declarations = args.declarations
+    axes, held = option_space.plan(declarations, args.pins, args.restrictions)
+    args.planned_options = {d.name for d in declarations} | set(args.pins)
 
     for name, reason in held:
-        if reason != "pinned with -o":
+        if reason != "pinned":
             print(f"NOTE: option {name} is held at its configured value: {reason}", file=sys.stderr)
 
     size = option_space.space_size(axes)
@@ -82,7 +145,8 @@ def _plan_option_sets(args, stats):
         print(
             f"error: --all-options would load {size} option sets ({counts}), more than "
             f"--max-option-sets {args.max_option_sets}\n"
-            "hint: pin options with -o KEY VALUE or raise --max-option-sets",
+            "hint: pin or narrow options with -o KEY VALUE or --options-file "
+            "(start from --options-template), or raise --max-option-sets",
             file=sys.stderr,
         )
         return None
@@ -125,6 +189,9 @@ def _with_option_set_errors(exit_code, stats):
 
 def _main() -> int:
     args = cli.parse_args()
+
+    if args.list_options or args.options_template:
+        return _describe_options(args)
 
     for stream_name in (sys.stdout, sys.stderr):
         if hasattr(stream_name, "reconfigure"):
@@ -182,6 +249,16 @@ def _main() -> int:
         )
         return 2
 
+    args.pinned_empty = []
+    if args.all_options or args.options_file:
+        try:
+            status = _prepare_options(args)
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if status is not None:
+            return status
+
     selection = adapter.make_selection(args.deps)
 
     context = Context()
@@ -221,9 +298,12 @@ def _main() -> int:
                 for option_set in option_sets:
                     try:
                         if option_set is None:
-                            _, project, elements = _load_selection(
-                                ctx, Project, Stream, args, selection, streams
-                            )
+                            with adapter.empty_flags_overrides(
+                                ctx, getattr(args, "project_name", None), args.pinned_empty
+                            ):
+                                _, project, elements = _load_selection(
+                                    ctx, Project, Stream, args, selection, streams
+                                )
                         else:
                             project, elements = _load_option_set(
                                 ctx, Project, Stream, args, selection, streams, option_set

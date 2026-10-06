@@ -641,6 +641,30 @@ config:
     assert "would load 4 option sets (flavour=2, extra=2)" in capped.stderr
     assert capped.stdout == ""
 
+    # Template -> edited options file -> search: narrow flavour, pin extra.
+    template = search("--options-template")
+    assert template.returncode == 0, template.stderr
+    assert (
+        "  # flavour: [x, y]" in template.stdout and "  # extra: [false, true]" in template.stdout
+    )
+    edited = template.stdout.replace("  # flavour: [x, y]", "  flavour: [y]")
+    edited = edited.replace("  # extra: [false, true]", "  extra: false")
+    options_file = tmp_path / "options.yml"
+    options_file.write_text(edited)
+    listing = search("--list-options", "--options-file", str(options_file))
+    assert listing.returncode == 0, listing.stderr
+    assert "[--all-options tries 1: 'y']" in listing.stdout
+    assert "[pinned to 'false']" in listing.stdout
+    narrowed = search("needle", "--all-options", "--json", "--options-file", str(options_file))
+    assert narrowed.returncode == 0, narrowed.stderr
+    narrowed_records = [json.loads(line) for line in narrowed.stdout.splitlines()]
+    assert {r["path"] for r in narrowed_records} == {"base.txt", "onlyy.txt", "suby.txt"}
+    assert all(r["option_sets"] == [{"flavour": "y"}] for r in narrowed_records)
+    # Without --all-options a one-value list is a pin; -o still overrides the file.
+    single = search("--find", "*.txt", "--options-file", str(options_file), "-o", "flavour", "x")
+    assert single.returncode == 0, single.stderr
+    assert "variant.bst:onlyx.txt" in single.stdout.splitlines()
+
 
 @pytest.mark.integration
 def test_all_options_applies_empty_flags_over_user_configuration(tmp_path):
