@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-026",
+    "tool": "bst-source-grep",
+    "title": "Search the union of sources across the toplevel project's option space",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "M",
+    "problem": "Project options select sources, dependencies, variable-expanded source configuration and junction options through (?) conditionals and exported variables, so a search under one option set misses sources that other supported configurations reach.",
+    "proposal": "Add --all-options: read the toplevel project.conf option declarations, enumerate bool/enum/arch/os/flags values (holding element-mask and -o pinned options), load each option set as the toplevel project in one BuildStream session, merge trees by digest and attribute each element record with the option sets that reached it.",
+    "acceptance": [
+      "The union of option sets finds sources selected by conditional sources, conditional dependencies, option-exported source variables and options forwarded through junctions.",
+      "Combinations rejected by a project (!) assertion are skipped with a note; other load failures and uncached trees name their option set and exit 2.",
+      "The option-space size is computed and capped before any value is enumerated; every flags subset, including the empty one, loads with exactly its planned values even when user configuration sets the option.",
+      "A configurable cap refuses combinatorial explosions before loading; -o pins an option.",
+      "Each unique tree is searched once; JSON records list every option set that reached them, including after --strip-junctions collapsing, and text output keeps its format.",
+      "Runs without --all-options keep their output, statuses and records."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh, PR #8.",
+      "Review of f89f5bb: cap before enumeration, explicit empty flags over user configuration and stripped JSON attribution fixed with regression tests (test_option_space.py, test_all_options_applies_empty_flags_over_user_configuration).",
+      "Re-review of 8991966: empty enum values stay on the command line (only empty flags use the [] override) and shared cache checks record single new trees; regression tests added (test_all_options_passes_empty_enum_values_on_the_command_line, test_shared_cache_checks_*).",
+      "Full suite passes locally against BuildStream 2.8.1 with FUSE; CI covers 2.8.0 and latest 2.x."
+    ]
+  }
+}

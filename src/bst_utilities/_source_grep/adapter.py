@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import importlib.util
+import os
+from contextlib import contextmanager
 
 
 def bst_get(node, key):
@@ -222,7 +224,7 @@ def make_selection(choice: str):
     return choice
 
 
-def create_project(Project, context, args, fetch_subprojects=None):
+def create_project(Project, context, args, fetch_subprojects=None, cli_options=None):
     # BuildStream expects a callback here, not the CLI's boolean.
     def refuse_fetch(junctions):
         names = ", ".join(sorted(element_label(j) for j in junctions)) or "unknown junction"
@@ -238,7 +240,7 @@ def create_project(Project, context, args, fetch_subprojects=None):
     return Project(
         args.directory,
         context,
-        cli_options=list(dict(args.option).items()),
+        cli_options=list(dict(args.option).items()) if cli_options is None else cli_options,
         fetch_subprojects=callback,
     )
 
@@ -278,3 +280,112 @@ def load_api():
     from buildstream._stream import Stream
 
     return Context, Project, Stream
+
+
+def declared_options(directory):
+    """
+    Read the option declarations of the project containing `directory`.
+
+    Parses project.conf with BuildStream's own YAML and option classes, without
+    resolving values: an arch/os option whose host default is not listed would
+    otherwise fail before any combination could be chosen. Options declared
+    through includes are not visible here; see project_option_names().
+    Returns (project name, declarations).
+    """
+    from buildstream import _yaml, utils
+    from buildstream._options import OptionPool
+
+    project_dir, _ = utils._search_upward_for_files(directory, ["project.conf"])
+    if project_dir is None:
+        raise RuntimeError(f"no project.conf found in {directory!r} or its parents")
+
+    node = _yaml.load(os.path.join(project_dir, "project.conf"), shortname="project.conf")
+    pool = OptionPool(os.path.join(project_dir, node.get_str("element-path", default=".")))
+    pool.load(node.get_mapping("options", default={}))
+
+    from .option_space import Declaration
+
+    declarations = []
+    for name, option in pool._options.items():
+        values = tuple(getattr(option, "values", None) or ())
+        declarations.append(
+            Declaration(name, option.OPTION_TYPE, values, _option_cli_value(option))
+        )
+    return node.get_str("name"), declarations
+
+
+def _option_cli_value(option):
+    """An option's current value in the command-line form option_space uses."""
+    if option.OPTION_TYPE == "bool":
+        return "true" if option.value else "false"
+    if option.OPTION_TYPE in ("flags", "element-mask"):
+        return ",".join(sorted(option.value or ()))
+    return option.value
+
+
+def loaded_option_values(project, names):
+    """Resolved values of `names` in a loaded project, in command-line form."""
+    options = project.options._options
+    return {name: _option_cli_value(options[name]) for name in names}
+
+
+@contextmanager
+def empty_flags_overrides(context, project_name, names):
+    """
+    Give flags options `names` an empty value while a project loads.
+
+    The command line cannot express an empty flags value, and leaving the
+    option out would inherit a user-configuration value instead. BuildStream
+    applies user-configuration options before command-line ones, so this sets
+    them through a copy of the context's project overrides.
+    """
+    if not names:
+        yield
+        return
+
+    original = getattr(context, "_project_overrides", None)
+    if original is None or not hasattr(original, "clone"):
+        raise RuntimeError("this BuildStream version cannot override empty flags options")
+
+    overrides = original.clone()
+    if overrides.get_mapping(project_name, default=None) is None:
+        overrides[project_name] = {}
+    project = overrides.get_mapping(project_name)
+    if project.get_mapping("options", default=None) is None:
+        project["options"] = {}
+    options = project.get_mapping("options")
+    for name in names:
+        options[name] = []
+
+    context._project_overrides = overrides
+    try:
+        yield
+    finally:
+        context._project_overrides = original
+
+
+def project_option_names(project):
+    """Names of every option the loaded project declares, including included ones."""
+    try:
+        return set(project.options._options)
+    except Exception:
+        return set()
+
+
+def reset_toplevel_project(context) -> None:
+    """
+    Let the next Project created on `context` become its toplevel project.
+
+    BuildStream treats the first project added to a Context as the toplevel
+    (project.refs lookup, junction overrides). Loading another option set in
+    the same session must not resolve refs through a previous set's project.
+    """
+    projects = getattr(context, "_projects", None)
+    if not isinstance(projects, list):
+        raise RuntimeError("this BuildStream version cannot load several option sets")
+    context._projects = []
+
+
+def is_user_assertion(exc) -> bool:
+    """Whether a load failed on a project `(!)` assertion for these options."""
+    return getattr(getattr(exc, "reason", None), "name", None) == "USER_ASSERTION"

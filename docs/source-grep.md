@@ -26,6 +26,7 @@ bst-source-grep TARGET --find GLOB [options]
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |
+| `--all-options`, `--max-option-sets N` | Search the union of sources reached under every combination of the toplevel project's options (see below); `-o` pins an option. Refuses more than N sets (default 64). |
 | `--config FILE` | BuildStream user configuration, including cache location and project overrides. |
 | `--glob GLOB`, `--exclude GLOB` | Repeatable file filters. Filename includes are ORed; excludes always win and also match ancestors. |
 | `-i`, `-F`, `-n`, `-l` | Ignore case, literal content pattern, show line numbers, filenames with content matches. `-i` also applies to the find pattern. |
@@ -65,6 +66,56 @@ a file.
 | 2 | Error or incomplete search, even if some matches were emitted |
 | 130 | Interrupted |
 | 141 | Output pipe closed by a reader (e.g. `head`); quiet exit after cleanup |
+
+## Searching every option set
+
+Project options change which sources a target reaches. `(?)` conditionals can
+replace or extend an element's `sources`, add or replace `depends` (so whole
+elements enter or leave the tree), and an option with `variable:` is expanded
+into source configuration such as a path or URL. Options never propagate into
+junctioned subprojects implicitly, but a junction's `config: options:` can
+forward a parent option value (`'%{arch}'`) or set one conditionally.
+`project.refs` can also be conditional. A search with the default or `-o`
+options therefore misses sources that other configurations use.
+
+`--all-options` reads the option declarations in the toplevel `project.conf` and
+loads the target once per combination, each as the toplevel project of one
+BuildStream session. Junction-forwarded options follow each combination; options
+a subproject declares but its junction does not set stay at their defaults.
+
+| Type | Enumerated values |
+| --- | --- |
+| `bool` | `false`, `true` |
+| `enum`, `arch`, `os` | Every listed value (foreign architectures load without building) |
+| `flags` | Every subset. BuildStream cannot parse an empty flags value from the command line, so the empty set is applied as a user-configuration override for that load |
+| `element-mask` | Not enumerated (its values are every `.bst` file); held at the configured value |
+
+Options pinned with `-o` are held. Enumerated values override user-configuration
+option values. Options declared only through a project.conf include are not
+seen before loading; a note names each one held at its configured value. The
+project-default combination is loaded first when every default is a listed value.
+
+The product of value counts (2^N for N flags) must not exceed `--max-option-sets`
+(default 64); it is computed before any value is enumerated, and otherwise the run
+fails before loading and names each option's count, so you can pin some with
+`-o`. After each load the resolved values are compared with the planned set; a
+mismatch is reported as a load failure for that set. Every combination costs a full project load; cache checks are
+shared, so a tree reached by several combinations, even a single new one, is checked
+and searched once.
+
+A combination rejected by a project `(!)` assertion is skipped with a `NOTE` and
+counted in `--stats`. Any other load failure, and every uncached or unresolved
+tree, is reported with its option set (`[options: arch=aarch64 debug=true]`) and
+makes the exit status 2. Fetch each combination you want covered, e.g.
+`bst -o arch aarch64 source fetch --deps all TARGET`.
+
+Text output is unchanged; one record is printed per element and tree, however
+many combinations reached it. JSON records add `option_sets`, the list of
+enumerated `{option: value}` sets that reached that element's tree, in load
+order. The same element name can therefore appear in several records when its
+sources differ between combinations. With `--strip-junctions`, JSON records are
+only collapsed when their option sets are equal too, so no set loses attribution;
+text output collapses as before.
 
 ## Cache and mounts
 

@@ -12,10 +12,10 @@ class RecordDeduplicator:
     def __init__(self, enabled):
         self.seen = set() if enabled else None
 
-    def duplicate(self, kind, display, path, line=None):
+    def duplicate(self, kind, display, path, line=None, attribution=None):
         if self.seen is None:
             return False
-        key = (kind, display, path, line)
+        key = (kind, display, path, line, attribution)
         if key in self.seen:
             return True
         self.seen.add(key)
@@ -53,10 +53,23 @@ class ResultEmitter:
         self.stats = stats
         self.dedup = RecordDeduplicator(args.strip_junctions)
 
+    def _attribution(self, element_info):
+        """
+        Option sets as part of a JSON record's identity.
+
+        Collapsed --strip-junctions records must not lose the option sets that
+        reached them, so JSON records with different sets stay separate. Text
+        output does not show them and keeps collapsing on display/path/line.
+        """
+        option_sets = element_info.get("option_sets")
+        if option_sets is None or not self.args.json:
+            return None
+        return tuple(tuple(option_set.items()) for option_set in option_sets)
+
     def emit_file(self, element_info, rel_path, origin=None):
         display = element_info["recipe"] if self.args.strip_junctions else element_info["label"]
 
-        if self.dedup.duplicate("file", display, rel_path):
+        if self.dedup.duplicate("file", display, rel_path, None, self._attribution(element_info)):
             return
 
         if self.args.json:
@@ -69,6 +82,9 @@ class ResultEmitter:
 
             if self.args.origin and origin is not None:
                 record["origin"] = origin
+
+            if "option_sets" in element_info:
+                record["option_sets"] = element_info["option_sets"]
 
             self.out.emit_json(record)
         else:
@@ -85,7 +101,9 @@ class ResultEmitter:
 
         # Distinct trees can share a stripped recipe name and path but
         # differ in content, so the line text is part of the identity.
-        if self.dedup.duplicate("match", display, rel_path, (line_number, hash(text))):
+        position = (line_number, hash(text))
+        attribution = self._attribution(element_info)
+        if self.dedup.duplicate("match", display, rel_path, position, attribution):
             return
 
         if self.args.json:
@@ -100,6 +118,9 @@ class ResultEmitter:
 
             if self.args.origin and origin is not None:
                 record["origin"] = origin
+
+            if "option_sets" in element_info:
+                record["option_sets"] = element_info["option_sets"]
 
             self.out.emit_json(record)
         else:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import os
 
+from .option_space import DEFAULT_MAX_OPTION_SETS
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -26,6 +28,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar=("KEY", "VALUE"),
         help="project option; repeatable, last value wins",
+    )
+    parser.add_argument(
+        "--all-options",
+        action="store_true",
+        help=(
+            "search the union of sources reached under every combination of the "
+            "toplevel project's options; -o pins an option to one value"
+        ),
+    )
+    parser.add_argument(
+        "--max-option-sets",
+        type=int,
+        default=DEFAULT_MAX_OPTION_SETS,
+        metavar="N",
+        help=(
+            "refuse --all-options when it would load more than N option sets "
+            f"(default: {DEFAULT_MAX_OPTION_SETS})"
+        ),
     )
 
     parser.add_argument(
@@ -263,6 +283,9 @@ def parse_args(argv=None):
 
     if args.backend == "cas" and args.find is None:
         parser.error("--backend=cas currently only supports --find")
+
+    if args.max_option_sets < 1:
+        parser.error("--max-option-sets must be at least 1")
 
     if args.jobs is None:
         args.jobs = min(DEFAULT_JOBS, os.cpu_count() or 1)

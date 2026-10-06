@@ -483,3 +483,304 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
             "lib.bst:lib.txt:main needle",
             "lib.bst:lib.txt:sub needle",
         ], stripped.stderr
+
+
+@pytest.mark.integration
+def test_all_options_searches_union_of_option_sets(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    main = tmp_path / "main"
+    files = {
+        "base/base.txt": "needle base\n",
+        "x/onlyx.txt": "needle x\n",
+        "y/onlyy.txt": "needle y\n",
+        "extra/extra.txt": "needle extra\n",
+        "sub/elements/lib.bst": """kind: import
+(?):
+- flavour == "x":
+    sources:
+    - kind: local
+      path: subx
+- flavour == "y":
+    sources:
+    - kind: local
+      path: suby
+""",
+        "sub/project.conf": """name: sub
+min-version: 2.8
+element-path: elements
+options:
+  flavour:
+    type: enum
+    description: forwarded by the parent junction
+    values: [x, y]
+    default: x
+""",
+        "sub/subx/subx.txt": "needle subx\n",
+        "sub/suby/suby.txt": "needle suby\n",
+        "project.conf": """name: main
+min-version: 2.8
+element-path: elements
+options:
+  flavour:
+    type: enum
+    description: selects sources through conditionals and the junction
+    values: [x, y]
+    default: x
+    variable: flavour
+  extra:
+    type: bool
+    description: adds a dependency
+    default: false
+""",
+        # flavour selects a source, a variable source path and a subproject option;
+        # extra appends a dependency; one combination is declared unsupported.
+        "elements/app.bst": """kind: stack
+depends:
+- base.bst
+- variant.bst
+- sub.bst:lib.bst
+(?):
+- extra:
+    depends:
+      (>):
+      - extra.bst
+- flavour == "y" and extra:
+    (!): flavour y does not support extra
+""",
+        "elements/base.bst": "kind: import\nsources:\n- kind: local\n  path: base\n",
+        "elements/extra.bst": "kind: import\nsources:\n- kind: local\n  path: extra\n",
+        "elements/variant.bst": "kind: import\nsources:\n- kind: local\n  path: '%{flavour}'\n",
+        "elements/sub.bst": """kind: junction
+sources:
+- kind: local
+  path: sub
+config:
+  options:
+    flavour: '%{flavour}'
+""",
+    }
+    for rel, text in files.items():
+        (main / rel).parent.mkdir(parents=True, exist_ok=True)
+        (main / rel).write_text(text)
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    def search(*args):
+        cmd = [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+        return subprocess.run(
+            cmd + ["-C", str(main), "app.bst", *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def fetch(*options):
+        subprocess.run(
+            ["bst", "-C", str(main), "--config", str(config), "--no-interactive", *options]
+            + ["source", "fetch", "--deps", "all", "app.bst"],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+    fetch()
+    default = search("--find", "*.txt")
+    assert default.returncode == 0, default.stderr
+    assert sorted(default.stdout.splitlines()) == [
+        "base.bst:base.txt",
+        "sub.bst:lib.bst:subx.txt",
+        "variant.bst:onlyx.txt",
+    ]
+
+    partial = search("--find", "*.txt", "--all-options")
+    assert partial.returncode == 2, partial.stderr
+    assert "NOTE: skipped option set [flavour=y extra=true]" in partial.stderr
+    assert "source tree is not cached: extra.bst [options: flavour=x extra=true]" in partial.stderr
+    assert "variant.bst:onlyx.txt" in partial.stdout.splitlines()
+
+    fetch("-o", "extra", "true")
+    fetch("-o", "flavour", "y")
+    union = search("needle", "--all-options", "--json", "--stats")
+    assert union.returncode == 0, union.stderr
+    assert re.search(r"option sets loaded:\s+3\b", union.stderr), union.stderr
+    assert re.search(r"option sets skipped:\s+1\b", union.stderr), union.stderr
+    records = [json.loads(line) for line in union.stdout.splitlines()]
+    reached = {r["path"]: r["option_sets"] for r in records}
+    x, xe, y = (
+        {"flavour": "x", "extra": "false"},
+        {"flavour": "x", "extra": "true"},
+        {"flavour": "y", "extra": "false"},
+    )
+    assert reached == {
+        "base.txt": [x, xe, y],
+        "onlyx.txt": [x, xe],
+        "onlyy.txt": [y],
+        "extra.txt": [xe],
+        "subx.txt": [x, xe],
+        "suby.txt": [y],
+    }
+    assert len(records) == 6  # each tree once, with every option set that reached it
+
+    pinned = search("--find", "*.txt", "--all-options", "-o", "flavour", "y")
+    assert pinned.returncode == 0, pinned.stderr
+    assert "onlyx.txt" not in pinned.stdout and "variant.bst:onlyy.txt" in pinned.stdout
+
+    capped = search("--find", "*.txt", "--all-options", "--max-option-sets", "3")
+    assert capped.returncode == 2
+    assert "would load 4 option sets (flavour=2, extra=2)" in capped.stderr
+    assert capped.stdout == ""
+
+
+@pytest.mark.integration
+def test_all_options_applies_empty_flags_over_user_configuration(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    project = tmp_path / "project"
+    files = {
+        "none/none.txt": "needle none\n",
+        "a/a.txt": "needle a\n",
+        "project.conf": """name: flagsproj
+min-version: 2.8
+element-path: elements
+options:
+  feats:
+    type: flags
+    description: empty by default
+    values: [a]
+    default: []
+""",
+        "elements/app.bst": """kind: import
+(?):
+- '"a" in feats':
+    sources:
+    - kind: local
+      path: a
+- '"a" not in feats':
+    sources:
+    - kind: local
+      path: none
+""",
+    }
+    for rel, text in files.items():
+        (project / rel).parent.mkdir(parents=True, exist_ok=True)
+        (project / rel).write_text(text)
+    # The user configuration selects feats=a; only the project default is empty,
+    # and BuildStream's command line cannot express an empty flags value.
+    plain = tmp_path / "plain.conf"
+    plain.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    override = tmp_path / "override.conf"
+    override.write_text(
+        f"cachedir: {tmp_path / 'cache'}\nprojects:\n  flagsproj:\n    options:\n      feats: [a]\n"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    for config in (plain, override):
+        subprocess.run(
+            ["bst", "-C", str(project), "--config", str(config), "--no-interactive"]
+            + ["source", "fetch", "app.bst"],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(override)]
+        + ["-C", str(project), "app.bst", "--find", "*.txt", "--all-options", "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    reached = {
+        json.loads(line)["path"]: json.loads(line)["option_sets"]
+        for line in result.stdout.splitlines()
+    }
+    assert reached == {"none.txt": [{"feats": ""}], "a.txt": [{"feats": "a"}]}
+
+
+@pytest.mark.integration
+def test_all_options_passes_empty_enum_values_on_the_command_line(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    project = tmp_path / "project"
+    files = {
+        "plain/plain.txt": "needle plain\n",
+        "x/x.txt": "needle x\n",
+        "project.conf": """name: enumproj
+min-version: 2.8
+element-path: elements
+options:
+  mode:
+    type: enum
+    description: an empty enum value is valid
+    values: ['', x]
+    default: ''
+""",
+        "elements/app.bst": """kind: import
+(?):
+- mode == "x":
+    sources:
+    - kind: local
+      path: x
+- mode == "":
+    sources:
+    - kind: local
+      path: plain
+""",
+    }
+    for rel, text in files.items():
+        (project / rel).parent.mkdir(parents=True, exist_ok=True)
+        (project / rel).write_text(text)
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    for options in ([], ["-o", "mode", "x"]):
+        subprocess.run(
+            ["bst", "-C", str(project), "--config", str(config), "--no-interactive", *options]
+            + ["source", "fetch", "app.bst"],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+        + ["-C", str(project), "app.bst", "--find", "*.txt", "--all-options", "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    reached = {
+        json.loads(line)["path"]: json.loads(line)["option_sets"]
+        for line in result.stdout.splitlines()
+    }
+    assert reached == {"plain.txt": [{"mode": ""}], "x.txt": [{"mode": "x"}]}
