@@ -77,15 +77,19 @@ def option_values(declaration):
     return ()
 
 
-def plan(declarations, pinned, restrictions=None):
+NOT_IN_FILE = "not in the options file"
+
+
+def plan(declarations, pinned, restrictions=None, only_restricted=False):
     """
     Split declarations into enumerated axes and held option names.
 
     `pinned` holds names fixed with -o or an options file; those and
     element-mask options are held. `restrictions` maps names to the only
-    values to enumerate. Returns (axes, held) where held is a list of
-    (name, reason). Values are not enumerated here, so space_size() can
-    enforce a cap first.
+    values to enumerate. With `only_restricted` (an options file was given),
+    options it does not list are held too. Returns (axes, held) where held
+    is a list of (name, reason). Values are not enumerated here, so
+    space_size() can enforce a cap first.
     """
     restrictions = restrictions or {}
     axes = []
@@ -96,6 +100,8 @@ def plan(declarations, pinned, restrictions=None):
         elif declaration.name in restrictions:
             choices = restrictions[declaration.name]
             axes.append(Axis(declaration, len(choices), choices))
+        elif only_restricted:
+            held.append((declaration.name, NOT_IN_FILE))
         elif declaration.type not in ENUMERATED_TYPES:
             held.append((declaration.name, f"{declaration.type} options are not enumerated"))
         else:
@@ -295,8 +301,9 @@ def render_template(project_name, declarations, pinned, restrictions=None):
         "#   name: [v1, v2]    make --all-options enumerate only these values",
         "# Each example lists every value; delete the ones you do not need.",
         "# A flags value is a list of flags; a list of such lists limits",
-        "# --all-options to those sets. Commented options are enumerated by",
-        "# --all-options and otherwise keep their configured value.",
+        "# --all-options to those sets. With this file, --all-options varies only",
+        "# the options listed in it; commented options keep their configured value",
+        "# (--unlisted-options vary tries every value of them instead).",
         "# -o KEY VALUE on the command line overrides this file.",
         "options:",
     ]
@@ -316,7 +323,7 @@ def render_template(project_name, declarations, pinned, restrictions=None):
     return "\n".join(lines) + "\n"
 
 
-def render_listing(declarations, pinned, restrictions=None):
+def render_listing(declarations, pinned, restrictions=None, only_restricted=False):
     """Human-readable list of options, their values and how a search uses them."""
     restrictions = restrictions or {}
     lines = []
@@ -329,6 +336,8 @@ def render_listing(declarations, pinned, restrictions=None):
             state = f"--all-options tries {len(restrictions[name])}: " + ", ".join(
                 repr(v) for v in restrictions[name]
             )
+        elif only_restricted:
+            state = "kept: not in the options file"
         elif declaration.type in ENUMERATED_TYPES:
             state = f"--all-options tries {value_count(declaration)}"
         else:

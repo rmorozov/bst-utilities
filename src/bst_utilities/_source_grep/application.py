@@ -134,20 +134,34 @@ def _describe_options(args):
             args.project_name, args.declarations, args.pins, args.restrictions
         )
     else:
-        text = option_space.render_listing(args.declarations, args.pins, args.restrictions)
+        text = option_space.render_listing(
+            args.declarations, args.pins, args.restrictions, _only_listed(args)
+        )
     sys.stdout.write(text)
     return 0
+
+
+def _only_listed(args):
+    """Whether options the options file leaves out are held, not enumerated."""
+    return bool(args.options_file) and args.unlisted_options == "keep"
 
 
 def _plan_option_sets(args, stats):
     """Return the option sets to load for --all-options, or None on error."""
     declarations = args.declarations
-    axes, held = option_space.plan(declarations, args.pins, args.restrictions)
+    axes, held = option_space.plan(declarations, args.pins, args.restrictions, _only_listed(args))
     args.planned_options = {d.name for d in declarations} | set(args.pins)
 
     for name, reason in held:
-        if reason != "pinned":
+        if reason not in ("pinned", option_space.NOT_IN_FILE):
             print(f"NOTE: option {name} is held at its configured value: {reason}", file=sys.stderr)
+    kept = [name for name, reason in held if reason == option_space.NOT_IN_FILE]
+    if kept:
+        print(
+            f"NOTE: {len(kept)} option(s) not in {args.options_file} keep their configured "
+            f"value: {', '.join(kept)} (--unlisted-options vary tries every value)",
+            file=sys.stderr,
+        )
 
     size = option_space.space_size(axes)
     if size > args.max_option_sets:

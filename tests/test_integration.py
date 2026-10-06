@@ -657,27 +657,33 @@ config:
     assert "would load 4 option sets (extra=2, flavour=2)" in capped.stderr
     assert capped.stdout == ""
 
-    # Template -> edited options file -> search: narrow flavour, pin extra.
+    # Template -> edited options file -> search: vary flavour; extra stays commented,
+    # so it keeps its configured value instead of being enumerated.
     template = search("--options-template")
     assert template.returncode == 0, template.stderr
     # "y" is a YAML 1.1 boolean, so the template quotes it.
     assert (
         '  # flavour: [x, "y"]' in template.stdout and "  # extra: [false, true]" in template.stdout
     )
-    edited = template.stdout.replace('  # flavour: [x, "y"]', '  flavour: ["y"]')
-    edited = edited.replace("  # extra: [false, true]", "  extra: false")
+    edited = template.stdout.replace('  # flavour: [x, "y"]', '  flavour: [x, "y"]')
     options_file = tmp_path / "options.yml"
     options_file.write_text(edited)
     listing = search("--list-options", "--options-file", str(options_file))
     assert listing.returncode == 0, listing.stderr
-    assert "[--all-options tries 1: 'y']" in listing.stdout
-    assert "[pinned to 'false']" in listing.stdout
+    assert "[--all-options tries 2: 'x', 'y']" in listing.stdout
+    assert "[kept: not in the options file]" in listing.stdout
     narrowed = search("needle", "--all-options", "--json", "--options-file", str(options_file))
     assert narrowed.returncode == 0, narrowed.stderr
+    assert "not in " + str(options_file) + " keep their configured value: extra" in narrowed.stderr
     narrowed_records = [json.loads(line) for line in narrowed.stdout.splitlines()]
-    assert {r["path"] for r in narrowed_records} == {"base.txt", "onlyy.txt", "suby.txt"}
-    assert all(r["option_sets"] == [{"flavour": "y"}] for r in narrowed_records)
-    # Without --all-options a one-value list is a pin; -o still overrides the file.
+    assert {r["path"]: r["option_sets"] for r in narrowed_records} == {
+        "base.txt": [{"flavour": "x"}, {"flavour": "y"}],
+        "onlyx.txt": [{"flavour": "x"}],
+        "onlyy.txt": [{"flavour": "y"}],
+        "subx.txt": [{"flavour": "x"}],
+        "suby.txt": [{"flavour": "y"}],
+    }
+    # Without --all-options, -o replaces the file's list with a pin.
     single = search("--find", "*.txt", "--options-file", str(options_file), "-o", "flavour", "x")
     assert single.returncode == 0, single.stderr
     assert "variant.bst:onlyx.txt" in single.stdout.splitlines()

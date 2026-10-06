@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-029",
+    "tool": "bst-source-grep",
+    "title": "Let an options file define the --all-options search space",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "With --options-file, options the file left out (commented in the template) were still enumerated over every value, so the cap error and the search reflected the full option space rather than the file's choices.",
+    "proposal": "Hold options an options file does not list at their configured value by default, with one note naming them; --unlisted-options vary restores enumerating them.",
+    "acceptance": [
+      "With --all-options --options-file, only options the file lists vary; the cap counts only those, and a note names the options kept at their configured value.",
+      "--unlisted-options vary enumerates options the file leaves out over every value.",
+      "--list-options and the template describe which options are kept; searches without --options-file are unchanged."
+    ],
+    "depends_on": [
+      "BSG-027"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (after PR #10).",
+      "test_options_file_varies_only_the_options_it_lists, test_cap_counts_only_what_the_options_file_varies and the template flow in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
+    ]
+  }
+}

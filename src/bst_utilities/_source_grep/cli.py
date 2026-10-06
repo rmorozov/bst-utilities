@@ -56,6 +56,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--unlisted-options",
+        choices=("keep", "vary"),
+        default="keep",
+        help=(
+            "with --options-file, options the file does not list keep their configured "
+            "value (keep, default) or --all-options tries every value (vary)"
+        ),
+    )
+    parser.add_argument(
         "--list-options",
         action="store_true",
         help="list the project's options, their values and pins, then exit",

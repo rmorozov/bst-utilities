@@ -29,6 +29,7 @@ bst-source-grep TARGET --find GLOB [options]
 | `--all-options`, `--max-option-sets N` | Search the union of sources reached under every combination of the toplevel project's options (see below); `-o` pins an option. Refuses more than N sets (default 64). |
 | `--list-options`, `--options-template` | Print the toplevel project's options (type, default, values, how a search uses them) or an `--options-file` template, then exit. No target is needed. |
 | `--options-file FILE` | `name: value` pins an option; `name: [a, b]` limits `--all-options` to those values. `-o` overrides the file. |
+| `--unlisted-options keep/vary` | With `--options-file`, options the file does not list keep their configured value (default `keep`), or `--all-options` tries every value of them (`vary`). |
 | `--config FILE` | BuildStream user configuration, including cache location and project overrides. |
 | `--glob GLOB`, `--exclude GLOB` | Repeatable file filters. Filename includes are ORed; excludes always win and also match ancestors. |
 | `-i`, `-F`, `-n`, `-l` | Ignore case, literal content pattern, show line numbers, filenames with content matches. `-i` also applies to the find pattern. |
@@ -133,6 +134,11 @@ you do not need. In the file:
 | `name: [v1, v2]` | `--all-options` enumerates only these values (shown in `option_sets`) |
 | `flags: [a, b]` or `'a,b'` | Pin a flags or element-mask option to that set (`[]` is the empty set) |
 | `flags: [[a], [a, b], []]` | `--all-options` enumerates only these sets |
+
+With a file, `--all-options` varies only the options the file lists; the others
+(commented out in the template) keep their configured value, and a note names
+them. `--unlisted-options vary` enumerates every value of them instead, so a file
+can narrow a few options while the rest still vary.
 
 `-o KEY VALUE` overrides the file for that option. Without `--all-options`, a
 one-value list is a pin and a longer list is an error. `--list-options` also
