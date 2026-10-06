@@ -100,7 +100,9 @@ def discover_trees(elements, args, stats, use_fuse, trees=None, option_set=None)
                 else:
                     existing["option_sets"].append(option_set)
                 continue
-            entry = {"element": element, "label": label, "recipe": recipe}
+            # Only --origin reads the element later; holding it would keep this
+            # option set's whole element graph alive.
+            entry = {"element": element if args.origin else None, "label": label, "recipe": recipe}
             entry["option_sets"] = [option_set]
             tree["entries"][key] = entry
             tree["elements"].append(entry)

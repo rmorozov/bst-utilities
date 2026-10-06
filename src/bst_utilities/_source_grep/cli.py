@@ -56,6 +56,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--fetch-sources",
+        action="store_true",
+        help=(
+            "fetch the selected sources (and junctions) into the local cache before "
+            "searching, for every option set with --all-options; uses the network"
+        ),
+    )
+    parser.add_argument(
+        "--unlisted-options",
+        choices=("keep", "vary"),
+        default="keep",
+        help=(
+            "with --options-file, options the file does not list keep their configured "
+            "value (keep, default) or --all-options tries every value (vary)"
+        ),
+    )
+    parser.add_argument(
         "--list-options",
         action="store_true",
         help="list the project's options, their values and pins, then exit",
@@ -303,6 +320,10 @@ def parse_args(argv=None):
 
     if args.target is None:
         parser.error("TARGET is required")
+
+    if args.fetch_sources:
+        # Sources inside a junction cannot be fetched without its subproject.
+        args.fetch_subprojects = True
 
     if args.find is None and args.pattern is None:
         parser.error("PATTERN is required unless --find is used")

@@ -457,6 +457,56 @@ def test_listing_shows_pins_restrictions_and_counts():
     assert "mask (element-mask), default: []  [held]" in lines
 
 
+def test_options_file_varies_only_the_options_it_lists():
+    declarations = _declarations()
+    axes, held = option_space.plan(
+        declarations, {"debug": "true"}, {"arch": ("aarch64", "x86_64")}, only_restricted=True
+    )
+    assert [(a.name, a.count) for a in axes] == [("arch", 2)]
+    assert held == [
+        ("debug", "pinned"),
+        ("mode", option_space.NOT_IN_FILE),
+        ("feats", option_space.NOT_IN_FILE),
+        ("mask", option_space.NOT_IN_FILE),
+    ]
+    text = option_space.render_listing(
+        declarations, {"debug": "true"}, {"arch": ("aarch64", "x86_64")}, only_restricted=True
+    )
+    assert "feats (flags), default: []  [kept: not in the options file]" in text.splitlines()
+
+
+def test_cap_counts_only_what_the_options_file_varies(monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    wide = Declaration("wide", "flags", tuple("pqrstuvw"), "")
+    monkeypatch.setattr(
+        adapter, "declared_options", lambda directory: ("p", [*_declarations(), wide], [])
+    )
+    monkeypatch.setattr(adapter, "load_options_file", lambda path: {"arch": ["aarch64", "x86_64"]})
+    args = cli.parse_args(["t.bst", "x", "--all-options", "--options-file", "o.yml"])
+    assert application._prepare_options(args) is None
+    stats = {}
+    sets = list(application._plan_option_sets(args, stats))
+    assert sets == [{"arch": "x86_64"}, {"arch": "aarch64"}]
+    assert stats["option_sets_planned"] == 2
+    err = capsys.readouterr().err
+    assert "NOTE: 5 option(s) not in o.yml keep their configured value: " in err
+    assert "debug, mode, feats, mask, wide" in err
+
+    # Without a file every option still varies, so the same project hits the cap.
+    args = cli.parse_args(["t.bst", "x", "--all-options"])
+    assert application._prepare_options(args) is None
+    assert application._plan_option_sets(args, {}) is None
+    assert "wide=256" in capsys.readouterr().err
+
+    # --unlisted-options vary enumerates what the file leaves out, as before.
+    argv = ["t.bst", "x", "--all-options", "--options-file", "o.yml", "--unlisted-options", "vary"]
+    args = cli.parse_args(argv)
+    assert application._prepare_options(args) is None
+    assert application._plan_option_sets(args, {}) is None
+    assert "(debug=2, arch=2, mode=2, feats=4, wide=256)" in capsys.readouterr().err
+
+
 def test_cli_describe_modes_need_no_target():
     args = cli.parse_args(["--list-options"])
     assert args.list_options and args.target is None
@@ -558,3 +608,30 @@ def test_template_switch_renders_existing_restrictions(monkeypatch, capsys):
     args = cli.parse_args(["--options-template", "--options-file", "o.yml"])
     assert application._describe_options(args) == 0
     assert "\n  arch: [riscv64]\n" in capsys.readouterr().out
+
+
+def test_progress_estimates_remaining_option_sets():
+    import io
+
+    from bst_utilities._source_grep import application
+
+    now = [0.0]
+    out = io.StringIO()
+    progress = application._Progress(1000, clock=lambda: now[0], stream=out)
+    now[0] = 3.0
+    progress.step()  # the first set always reports an estimate
+    for _ in range(9):
+        now[0] += 3.0
+        progress.step()  # within the interval: quiet
+    now[0] += 3.0
+    progress.step()
+    assert out.getvalue().splitlines() == [
+        "NOTE: loaded 1/1000 option sets in 3s; about 49m57s left",
+        "NOTE: loaded 11/1000 option sets in 33s; about 49m27s left",
+    ]
+    assert application._duration(2e9 * 2.8) == "178 years"
+
+    quiet = io.StringIO()
+    single = application._Progress(1, clock=lambda: 0.0, stream=quiet)
+    single.step()
+    assert quiet.getvalue() == ""

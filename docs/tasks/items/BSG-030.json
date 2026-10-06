@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-030",
+    "tool": "bst-source-grep",
+    "title": "Bound the cost of large --all-options runs and fetch every option set",
+    "area": "performance",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Each option set is a full project load, but --all-options gave no estimate of the time a large --max-option-sets would take, kept every set's element graph in memory until the end (about 9.5 MB per set on a 500-element project), built every set up front, and required a manual bst source fetch per combination.",
+    "proposal": "Generate option sets lazily, record trees right after each load and release that set's element graph, print a time estimate after the first set and periodic progress, and add an explicit --fetch-sources that fetches (never tracks) each set before loading it.",
+    "acceptance": [
+      "Memory no longer grows with each option set when --origin is not used; option sets are not materialized up front.",
+      "With more than one option set, a note after the first set estimates the remaining time and is refreshed at most every 30 seconds.",
+      "--fetch-sources fetches each option set's selected sources and junctions before loading it; nothing is fetched without it and sources are never tracked."
+    ],
+    "depends_on": [
+      "BSG-026"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (PR #11).",
+      "500-element project, 128 option sets: peak RSS 1268 MB before, 212 MB after; about 2.8 s per set.",
+      "test_progress_estimates_remaining_option_sets and the --fetch-sources run in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
+    ]
+  }
+}
