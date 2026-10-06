@@ -24,12 +24,33 @@ class Declaration:
 
 @dataclass(frozen=True)
 class Axis:
-    name: str
-    values: tuple
+    """An enumerated option; its values are produced only when iterated."""
+
+    declaration: Declaration
+    count: int
+
+    @property
+    def name(self):
+        return self.declaration.name
+
+    @property
+    def values(self):
+        return option_values(self.declaration)
+
+
+def value_count(declaration):
+    """Number of values option_values() would produce, without producing them."""
+    if declaration.type == "bool":
+        return 2
+    if declaration.type in ("enum", "arch", "os"):
+        return len(declaration.values)
+    if declaration.type == "flags":
+        return 2 ** len(declaration.values)
+    return 0
 
 
 def option_values(declaration):
-    """Command-line values for one option; "" means "leave at the default"."""
+    """Command-line form of every value of one option; "" is the empty flags set."""
     if declaration.type == "bool":
         return ("false", "true")
 
@@ -37,15 +58,12 @@ def option_values(declaration):
         return tuple(declaration.values)
 
     if declaration.type == "flags":
-        # BuildStream cannot parse an empty flags value from the command line,
-        # so the empty set is only reachable when it is the project default.
-        values = []
-        if declaration.default == "":
-            values.append("")
         flags = sorted(declaration.values)
-        for size in range(1, len(flags) + 1):
-            values.extend(",".join(subset) for subset in itertools.combinations(flags, size))
-        return tuple(values)
+        return tuple(
+            ",".join(subset)
+            for size in range(len(flags) + 1)
+            for subset in itertools.combinations(flags, size)
+        )
 
     return ()
 
@@ -55,7 +73,8 @@ def plan(declarations, pinned):
     Split declarations into enumerated axes and held option names.
 
     `pinned` holds names fixed with -o; those and element-mask options are
-    held. Returns (axes, held) where held is a list of (name, reason).
+    held. Returns (axes, held) where held is a list of (name, reason). Values
+    are not enumerated here, so space_size() can enforce a cap first.
     """
     axes = []
     held = []
@@ -65,16 +84,16 @@ def plan(declarations, pinned):
         elif declaration.type not in ENUMERATED_TYPES:
             held.append((declaration.name, f"{declaration.type} options are not enumerated"))
         else:
-            values = option_values(declaration)
-            if values:
-                axes.append(Axis(declaration.name, values))
+            count = value_count(declaration)
+            if count:
+                axes.append(Axis(declaration, count))
     return axes, held
 
 
 def space_size(axes):
     size = 1
     for axis in axes:
-        size *= len(axis.values)
+        size *= axis.count
     return size
 
 
@@ -86,13 +105,16 @@ def iter_option_sets(axes, declarations):
     valid value (an arch/os default is the host's, which may not be listed).
     """
     defaults = {d.name: d.default for d in declarations}
+    values_per_axis = [axis.values for axis in axes]
     default_set = {axis.name: defaults.get(axis.name) for axis in axes}
-    has_default = all(default_set[axis.name] in axis.values for axis in axes)
+    has_default = all(
+        default_set[axis.name] in values for axis, values in zip(axes, values_per_axis)
+    )
 
     if has_default:
         yield default_set
 
-    for values in itertools.product(*(axis.values for axis in axes)):
+    for values in itertools.product(*values_per_axis):
         option_set = {axis.name: value for axis, value in zip(axes, values)}
         if has_default and option_set == default_set:
             continue
@@ -100,12 +122,22 @@ def iter_option_sets(axes, declarations):
 
 
 def cli_options(base, option_set):
-    """Combine -o values with one option set; empty flags stay at their default."""
+    """
+    Combine -o values with one option set.
+
+    BuildStream cannot parse an empty flags value from the command line, so
+    empty values are left out here and applied with empty_flags() instead.
+    """
     merged = dict(base)
     for name, value in option_set.items():
         if value != "":
             merged[name] = value
     return list(merged.items())
+
+
+def empty_flags(option_set):
+    """Names of flags options this set gives the empty value."""
+    return [name for name, value in option_set.items() if value == ""]
 
 
 def label(option_set):

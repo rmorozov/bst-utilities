@@ -44,9 +44,29 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     return stream, project, adapter.call_load_selection(stream, args.target, selection)
 
 
+def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set):
+    """Load one --all-options set as the toplevel project and check it took effect."""
+    adapter.reset_toplevel_project(ctx)
+    empty = option_space.empty_flags(option_set)
+    with adapter.empty_flags_overrides(ctx, args.project_name, empty):
+        _, project, elements = _load_selection(
+            ctx,
+            Project,
+            Stream,
+            args,
+            selection,
+            streams,
+            option_space.cli_options(args.option, option_set),
+        )
+    loaded = adapter.loaded_option_values(project, option_set)
+    if loaded != option_set:
+        raise RuntimeError(f"project resolved options to [{option_space.label(loaded)}]")
+    return project, elements
+
+
 def _plan_option_sets(args, stats):
     """Return the option sets to load for --all-options, or None on error."""
-    declarations = adapter.declared_options(args.directory)
+    args.project_name, declarations = adapter.declared_options(args.directory)
     pinned = dict(args.option)
     axes, held = option_space.plan(declarations, pinned)
     args.planned_options = {d.name for d in declarations} | set(pinned)
@@ -57,7 +77,7 @@ def _plan_option_sets(args, stats):
 
     size = option_space.space_size(axes)
     if size > args.max_option_sets:
-        counts = ", ".join(f"{axis.name}={len(axis.values)}" for axis in axes)
+        counts = ", ".join(f"{axis.name}={axis.count}" for axis in axes)
         print(
             f"error: --all-options would load {size} option sets ({counts}), more than "
             f"--max-option-sets {args.max_option_sets}\n"
@@ -198,15 +218,15 @@ def _main() -> int:
 
                 loaded = []
                 for option_set in option_sets:
-                    if option_set is None:
-                        cli_options = None
-                    else:
-                        cli_options = option_space.cli_options(args.option, option_set)
-                        adapter.reset_toplevel_project(ctx)
                     try:
-                        _, project, elements = _load_selection(
-                            ctx, Project, Stream, args, selection, streams, cli_options
-                        )
+                        if option_set is None:
+                            _, project, elements = _load_selection(
+                                ctx, Project, Stream, args, selection, streams
+                            )
+                        else:
+                            project, elements = _load_option_set(
+                                ctx, Project, Stream, args, selection, streams, option_set
+                            )
                     except (KeyboardInterrupt, BrokenPipeError):
                         raise
                     except Exception as exc:

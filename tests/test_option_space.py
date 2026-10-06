@@ -16,18 +16,33 @@ def test_option_values_per_type():
         "x86_64",
         "aarch64",
     )
-    # The empty flags set cannot be given on the command line: only the default.
-    assert option_space.option_values(Declaration("f", "flags", ("b", "a"), "")) == (
-        "",
-        "a",
-        "b",
-        "a,b",
+    # Every subset, including the empty one, whatever the default.
+    flags = Declaration("f", "flags", ("b", "a"), "a")
+    assert option_space.option_values(flags) == ("", "a", "b", "a,b")
+    assert option_space.value_count(flags) == 4
+
+
+def test_cap_is_checked_without_enumerating_flags(monkeypatch):
+    def enumerate_values(declaration):
+        raise AssertionError("values enumerated before the cap was checked")
+
+    monkeypatch.setattr(option_space, "option_values", enumerate_values)
+    many = Declaration("f", "flags", tuple(f"flag{i}" for i in range(64)), "")
+    axes, _ = option_space.plan([many, Declaration("d", "bool", (), "false")], {})
+    assert option_space.space_size(axes) == 2**65
+
+
+def test_application_rejects_flags_explosion_before_enumerating(monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    many = Declaration("f", "flags", tuple(f"flag{i}" for i in range(40)), "")
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", [many]))
+    monkeypatch.setattr(
+        option_space, "option_values", lambda d: pytest.fail("enumerated before cap")
     )
-    assert option_space.option_values(Declaration("f", "flags", ("b", "a"), "a")) == (
-        "a",
-        "b",
-        "a,b",
-    )
+    args = cli.parse_args(["t.bst", "--find", "*", "--all-options"])
+    assert application._plan_option_sets(args, stats.new_stats()) is None
+    assert "would load 1099511627776 option sets (f=1099511627776)" in capsys.readouterr().err
 
 
 def test_plan_holds_pinned_and_element_mask_options():
@@ -70,9 +85,11 @@ def test_no_declared_options_load_defaults_once():
     assert option_space.label({}) == "project defaults"
 
 
-def test_cli_options_keep_pins_and_omit_empty_flags():
-    merged = option_space.cli_options([("arch", "x86_64")], {"debug": "true", "feats": ""})
+def test_cli_options_keep_pins_and_leave_empty_flags_to_overrides():
+    option_set = {"debug": "true", "feats": ""}
+    merged = option_space.cli_options([("arch", "x86_64")], option_set)
     assert merged == [("arch", "x86_64"), ("debug", "true")]
+    assert option_space.empty_flags(option_set) == ["feats"]
     assert option_space.label({"debug": "true", "feats": ""}) == "debug=true feats="
 
 
@@ -184,10 +201,57 @@ options:
     type: element-mask
     description: masked elements
 """)
-    declarations = adapter.declared_options(str(tmp_path / "elements" / "sub"))
+    name, declarations = adapter.declared_options(str(tmp_path / "elements" / "sub"))
+    assert name == "opts"
     by_name = {d.name: d for d in declarations}
     assert [d.name for d in declarations] == ["debug", "machine", "feats", "mask"]
     assert by_name["debug"].default == "true"
     assert by_name["machine"].type == "arch" and by_name["machine"].values == ("riscv64",)
     assert by_name["feats"].default == "a,b"
     assert by_name["mask"].values == ("a.bst",)
+
+
+def test_strip_dedup_keeps_json_attribution_of_distinct_trees(capsys):
+    def run(json_mode):
+        args = SimpleNamespace(json=json_mode, origin=False, line_number=True, strip_junctions=True)
+        emitter = output.ResultEmitter(args, output.LineBuffer(), stats.new_stats())
+        off, on = {"debug": "false"}, {"debug": "true"}
+        # lib.bst reaches two different trees with the same matched path and line.
+        for option_set in (off, on):
+            element = {"label": "lib.bst", "recipe": "lib.bst", "option_sets": [option_set]}
+            emitter.emit_file(element, "common.c")
+            emitter.emit_match(element, "common.c", 3, "needle")
+        # A second junction instance of the same tree and sets still collapses.
+        element = {"label": "sub.bst:lib.bst", "recipe": "lib.bst", "option_sets": [on]}
+        emitter.emit_match(element, "common.c", 3, "needle")
+        emitter.out.flush()
+        return capsys.readouterr().out.splitlines()
+
+    records = [json.loads(line) for line in run(True)]
+    assert [(r["type"], r["option_sets"]) for r in records] == [
+        ("file", [{"debug": "false"}]),
+        ("match", [{"debug": "false"}]),
+        ("file", [{"debug": "true"}]),
+        ("match", [{"debug": "true"}]),
+    ]
+    assert run(False) == ["lib.bst:common.c", "lib.bst:common.c:3:needle"]
+
+
+def test_empty_flags_overrides_replace_user_configuration_temporarily():
+    pytest.importorskip("buildstream")
+    from buildstream.node import Node
+
+    original = Node.from_dict({"opts": {"options": {"feats": ["a"]}, "strict": False}})
+    context = SimpleNamespace(_project_overrides=original)
+    with adapter.empty_flags_overrides(context, "opts", ["feats", "more"]):
+        options = context._project_overrides.get_mapping("opts").get_mapping("options")
+        assert options.get_sequence("feats").as_str_list() == []
+        assert options.get_sequence("more").as_str_list() == []
+    assert context._project_overrides is original
+    assert original.strip_node_info() == {"opts": {"options": {"feats": ["a"]}, "strict": "False"}}
+
+    empty = SimpleNamespace(_project_overrides=Node.from_dict({}))
+    with adapter.empty_flags_overrides(empty, "opts", ["feats"]):
+        assert empty._project_overrides.strip_node_info() == {"opts": {"options": {"feats": []}}}
+    with adapter.empty_flags_overrides(SimpleNamespace(), "opts", []):
+        pass

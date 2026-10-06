@@ -640,3 +640,78 @@ config:
     assert capped.returncode == 2
     assert "would load 4 option sets (flavour=2, extra=2)" in capped.stderr
     assert capped.stdout == ""
+
+
+@pytest.mark.integration
+def test_all_options_applies_empty_flags_over_user_configuration(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    project = tmp_path / "project"
+    files = {
+        "none/none.txt": "needle none\n",
+        "a/a.txt": "needle a\n",
+        "project.conf": """name: flagsproj
+min-version: 2.8
+element-path: elements
+options:
+  feats:
+    type: flags
+    description: empty by default
+    values: [a]
+    default: []
+""",
+        "elements/app.bst": """kind: import
+(?):
+- '"a" in feats':
+    sources:
+    - kind: local
+      path: a
+- '"a" not in feats':
+    sources:
+    - kind: local
+      path: none
+""",
+    }
+    for rel, text in files.items():
+        (project / rel).parent.mkdir(parents=True, exist_ok=True)
+        (project / rel).write_text(text)
+    # The user configuration selects feats=a; only the project default is empty,
+    # and BuildStream's command line cannot express an empty flags value.
+    plain = tmp_path / "plain.conf"
+    plain.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    override = tmp_path / "override.conf"
+    override.write_text(
+        f"cachedir: {tmp_path / 'cache'}\nprojects:\n  flagsproj:\n    options:\n      feats: [a]\n"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    for config in (plain, override):
+        subprocess.run(
+            ["bst", "-C", str(project), "--config", str(config), "--no-interactive"]
+            + ["source", "fetch", "app.bst"],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(override)]
+        + ["-C", str(project), "app.bst", "--find", "*.txt", "--all-options", "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    reached = {
+        json.loads(line)["path"]: json.loads(line)["option_sets"]
+        for line in result.stdout.splitlines()
+    }
+    assert reached == {"none.txt": [{"feats": ""}], "a.txt": [{"feats": "a"}]}

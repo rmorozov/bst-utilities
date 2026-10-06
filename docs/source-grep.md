@@ -87,7 +87,7 @@ a subproject declares but its junction does not set stay at their defaults.
 | --- | --- |
 | `bool` | `false`, `true` |
 | `enum`, `arch`, `os` | Every listed value (foreign architectures load without building) |
-| `flags` | Every non-empty subset; the empty set only when it is the project default, because BuildStream cannot parse an empty flags value from the command line |
+| `flags` | Every subset. BuildStream cannot parse an empty flags value from the command line, so the empty set is applied as a user-configuration override for that load |
 | `element-mask` | Not enumerated (its values are every `.bst` file); held at the configured value |
 
 Options pinned with `-o` are held. Enumerated values override user-configuration
@@ -95,9 +95,11 @@ option values. Options declared only through a project.conf include are not
 seen before loading; a note names each one held at its configured value. The
 project-default combination is loaded first when every default is a listed value.
 
-The product of value counts must not exceed `--max-option-sets` (default 64);
-otherwise the run fails before loading and names each option's count, so you can
-pin some with `-o`. Every combination costs a full project load; cache checks are
+The product of value counts (2^N for N flags) must not exceed `--max-option-sets`
+(default 64); it is computed before any value is enumerated, and otherwise the run
+fails before loading and names each option's count, so you can pin some with
+`-o`. After each load the resolved values are compared with the planned set; a
+mismatch is reported as a load failure for that set. Every combination costs a full project load; cache checks are
 shared, so a tree reached by several combinations is checked and searched once.
 
 A combination rejected by a project `(!)` assertion is skipped with a `NOTE` and
@@ -110,7 +112,9 @@ Text output is unchanged; one record is printed per element and tree, however
 many combinations reached it. JSON records add `option_sets`, the list of
 enumerated `{option: value}` sets that reached that element's tree, in load
 order. The same element name can therefore appear in several records when its
-sources differ between combinations.
+sources differ between combinations. With `--strip-junctions`, JSON records are
+only collapsed when their option sets are equal too, so no set loses attribution;
+text output collapses as before.
 
 ## Cache and mounts
 

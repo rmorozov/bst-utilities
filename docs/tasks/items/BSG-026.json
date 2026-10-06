@@ -13,14 +13,16 @@
     "acceptance": [
       "The union of option sets finds sources selected by conditional sources, conditional dependencies, option-exported source variables and options forwarded through junctions.",
       "Combinations rejected by a project (!) assertion are skipped with a note; other load failures and uncached trees name their option set and exit 2.",
+      "The option-space size is computed and capped before any value is enumerated; every flags subset, including the empty one, loads with exactly its planned values even when user configuration sets the option.",
       "A configurable cap refuses combinatorial explosions before loading; -o pins an option.",
-      "Each unique tree is searched once; JSON records list every option set that reached them and text output keeps its format.",
+      "Each unique tree is searched once; JSON records list every option set that reached them, including after --strip-junctions collapsing, and text output keeps its format.",
       "Runs without --all-options keep their output, statuses and records."
     ],
     "depends_on": [],
     "evidence": [
-      "Branch claude/source-grep-all-options-eheilh.",
-      "tests/test_option_space.py and test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1 with FUSE; full suite 131 passed locally."
+      "Branch claude/source-grep-all-options-eheilh, PR #8.",
+      "Review of f89f5bb: cap before enumeration, explicit empty flags over user configuration and stripped JSON attribution fixed with regression tests (test_option_space.py, test_all_options_applies_empty_flags_over_user_configuration).",
+      "Full suite passes locally against BuildStream 2.8.1 with FUSE; CI covers 2.8.0 and latest 2.x."
     ]
   }
 }
