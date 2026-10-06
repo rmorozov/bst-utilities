@@ -87,9 +87,17 @@ def test_no_declared_options_load_defaults_once():
 
 def test_cli_options_keep_pins_and_leave_empty_flags_to_overrides():
     option_set = {"debug": "true", "feats": ""}
-    merged = option_space.cli_options([("arch", "x86_64")], option_set)
+    merged = option_space.cli_options([("arch", "x86_64")], option_set, {"feats"})
     assert merged == [("arch", "x86_64"), ("debug", "true")]
-    assert option_space.empty_flags(option_set) == ["feats"]
+    assert option_space.empty_flags(option_set, {"feats"}) == ["feats"]
+
+
+def test_empty_enum_value_goes_on_the_command_line():
+    # BuildStream accepts an enum value of "" on the command line, but rejects
+    # the [] override that only an empty flags value needs.
+    option_set = {"flavour": "", "feats": ""}
+    assert option_space.cli_options([], option_set, {"feats"}) == [("flavour", "")]
+    assert option_space.empty_flags(option_set, {"feats"}) == ["feats"]
     assert option_space.label({"debug": "true", "feats": ""}) == "debug=true feats="
 
 

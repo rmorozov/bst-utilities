@@ -287,3 +287,40 @@ def test_rg_abort_kills_children_that_ignore_sigterm(tmp_path):
     assert not worker.is_alive()
     assert time.monotonic() - start < 5
     assert proc.returncode is not None and errors
+
+
+def test_shared_cache_checks_record_single_new_trees():
+    outcomes = {"a": None, "b": None, "c": None}
+    cas, ctx, element, rpcs, calls = cache_check_fixture(outcomes)
+    elements = {h: element(h) for h in outcomes}
+
+    def load(*hashes):
+        selected = [elements[h][0] for h in hashes]
+        return source_cache.prefetch_source_cache_state(selected, ctx, 2, shared=True)
+
+    # Option sets reaching [a, b], [a, c] and [b, c]: c is new once, then known.
+    assert load("a", "b") == 2
+    assert load("a", "c") == 1
+    assert load("b", "c") == 0
+    assert sorted(rpcs) == ["a", "b", "c"]
+    for h in outcomes:
+        assert cas.contains_directory(elements[h][1]) is True
+    assert calls == []
+
+
+def test_shared_cache_checks_single_tree_selection_once():
+    cas, ctx, element, rpcs, calls = cache_check_fixture({"a": None})
+    only, digest = element("a")
+    assert [
+        source_cache.prefetch_source_cache_state([only], ctx, 2, shared=True) for _ in range(3)
+    ] == [1, 0, 0]
+    assert cas.contains_directory(digest) is True
+    assert calls == []
+
+
+def test_unshared_single_tree_keeps_buildstream_check():
+    cas, ctx, element, rpcs, calls = cache_check_fixture({"a": None})
+    only, digest = element("a")
+    assert source_cache.prefetch_source_cache_state([only], ctx, 2) == 0
+    assert rpcs == {}
+    assert cas.contains_directory(digest) == "original"

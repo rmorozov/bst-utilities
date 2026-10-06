@@ -47,7 +47,7 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
 def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set):
     """Load one --all-options set as the toplevel project and check it took effect."""
     adapter.reset_toplevel_project(ctx)
-    empty = option_space.empty_flags(option_set)
+    empty = option_space.empty_flags(option_set, args.flags_options)
     with adapter.empty_flags_overrides(ctx, args.project_name, empty):
         _, project, elements = _load_selection(
             ctx,
@@ -56,7 +56,7 @@ def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set)
             args,
             selection,
             streams,
-            option_space.cli_options(args.option, option_set),
+            option_space.cli_options(args.option, option_set, args.flags_options),
         )
     loaded = adapter.loaded_option_values(project, option_set)
     if loaded != option_set:
@@ -67,6 +67,7 @@ def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set)
 def _plan_option_sets(args, stats):
     """Return the option sets to load for --all-options, or None on error."""
     args.project_name, declarations = adapter.declared_options(args.directory)
+    args.flags_options = {d.name for d in declarations if d.type == "flags"}
     pinned = dict(args.option)
     axes, held = option_space.plan(declarations, pinned)
     args.planned_options = {d.name for d in declarations} | set(pinned)
@@ -245,6 +246,7 @@ def _main() -> int:
                         elements,
                         ctx,
                         min(source_cache.CACHE_CHECK_WORKERS, 2 * (os.cpu_count() or 1)),
+                        shared=args.all_options,
                     )
                     stats["cache_check_seconds"] += time.monotonic() - phase_start
                     loaded.append((option_set, elements))

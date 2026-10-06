@@ -121,23 +121,25 @@ def iter_option_sets(axes, declarations):
         yield option_set
 
 
-def cli_options(base, option_set):
+def cli_options(base, option_set, flags_options):
     """
     Combine -o values with one option set.
 
     BuildStream cannot parse an empty flags value from the command line, so
-    empty values are left out here and applied with empty_flags() instead.
+    those are left out here and applied with empty_flags() instead. Other
+    options, such as an enum with an empty value, are passed as they are.
     """
     merged = dict(base)
+    empty = set(empty_flags(option_set, flags_options))
     for name, value in option_set.items():
-        if value != "":
+        if name not in empty:
             merged[name] = value
     return list(merged.items())
 
 
-def empty_flags(option_set):
-    """Names of flags options this set gives the empty value."""
-    return [name for name, value in option_set.items() if value == ""]
+def empty_flags(option_set, flags_options):
+    """Names of the flags options (in `flags_options`) this set leaves empty."""
+    return [name for name, value in option_set.items() if value == "" and name in flags_options]
 
 
 def label(option_set):

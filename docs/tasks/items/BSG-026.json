@@ -22,6 +22,7 @@
     "evidence": [
       "Branch claude/source-grep-all-options-eheilh, PR #8.",
       "Review of f89f5bb: cap before enumeration, explicit empty flags over user configuration and stripped JSON attribution fixed with regression tests (test_option_space.py, test_all_options_applies_empty_flags_over_user_configuration).",
+      "Re-review of 8991966: empty enum values stay on the command line (only empty flags use the [] override) and shared cache checks record single new trees; regression tests added (test_all_options_passes_empty_enum_values_on_the_command_line, test_shared_cache_checks_*).",
       "Full suite passes locally against BuildStream 2.8.1 with FUSE; CI covers 2.8.0 and latest 2.x."
     ]
   }

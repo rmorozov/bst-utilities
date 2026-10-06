@@ -100,7 +100,8 @@ The product of value counts (2^N for N flags) must not exceed `--max-option-sets
 fails before loading and names each option's count, so you can pin some with
 `-o`. After each load the resolved values are compared with the planned set; a
 mismatch is reported as a load failure for that set. Every combination costs a full project load; cache checks are
-shared, so a tree reached by several combinations is checked and searched once.
+shared, so a tree reached by several combinations, even a single new one, is checked
+and searched once.
 
 A combination rejected by a project `(!)` assertion is skipped with a `NOTE` and
 counted in `--stats`. Any other load failure, and every uncached or unresolved

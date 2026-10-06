@@ -118,7 +118,7 @@ def load_source_directory(element):
     return files, "ok", None
 
 
-def prefetch_source_cache_state(elements, ctx, workers):
+def prefetch_source_cache_state(elements, ctx, workers, shared=False):
     """
     Answer BuildStream's per-element source cache checks from concurrent ones.
 
@@ -129,8 +129,9 @@ def prefetch_source_cache_state(elements, ctx, workers):
     from the results. RPC futures are awaited on this thread and all of them are
     cancelled if the wait is interrupted, so Ctrl-C never waits on casd. Only
     the definite answers (OK, NOT_FOUND) are recorded; anything else, or a
-    remote cache, leaves BuildStream's own call in place. Repeated calls (one
-    per --all-options set) share the answers and only check new trees.
+    remote cache, leaves BuildStream's own call in place. With `shared`, calls
+    (one per --all-options set) share the answers, only check new trees and
+    record even a single new tree, so no tree is checked once per set.
     Returns the number of trees checked.
     """
     try:
@@ -164,7 +165,9 @@ def prefetch_source_cache_state(elements, ctx, workers):
             if results is None or key not in results:
                 digests[key] = proto.files
 
-    if len(digests) < 2:
+    # A single load gains no concurrency from one tree; shared loads still
+    # record it so later option sets do not check it again.
+    if len(digests) < (1 if shared else 2):
         return 0
 
     def start(digest):

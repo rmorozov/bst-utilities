@@ -715,3 +715,72 @@ options:
         for line in result.stdout.splitlines()
     }
     assert reached == {"none.txt": [{"feats": ""}], "a.txt": [{"feats": "a"}]}
+
+
+@pytest.mark.integration
+def test_all_options_passes_empty_enum_values_on_the_command_line(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    project = tmp_path / "project"
+    files = {
+        "plain/plain.txt": "needle plain\n",
+        "x/x.txt": "needle x\n",
+        "project.conf": """name: enumproj
+min-version: 2.8
+element-path: elements
+options:
+  mode:
+    type: enum
+    description: an empty enum value is valid
+    values: ['', x]
+    default: ''
+""",
+        "elements/app.bst": """kind: import
+(?):
+- mode == "x":
+    sources:
+    - kind: local
+      path: x
+- mode == "":
+    sources:
+    - kind: local
+      path: plain
+""",
+    }
+    for rel, text in files.items():
+        (project / rel).parent.mkdir(parents=True, exist_ok=True)
+        (project / rel).write_text(text)
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    for options in ([], ["-o", "mode", "x"]):
+        subprocess.run(
+            ["bst", "-C", str(project), "--config", str(config), "--no-interactive", *options]
+            + ["source", "fetch", "app.bst"],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+        + ["-C", str(project), "app.bst", "--find", "*.txt", "--all-options", "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    reached = {
+        json.loads(line)["path"]: json.loads(line)["option_sets"]
+        for line in result.stdout.splitlines()
+    }
+    assert reached == {"plain.txt": [{"mode": ""}], "x.txt": [{"mode": "x"}]}
