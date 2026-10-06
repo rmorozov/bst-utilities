@@ -44,6 +44,12 @@ def print_stats(stats: dict) -> None:
     print(f"  path cache hits:      {stats['path_cache_hits']}", file=sys.stderr)
     print(f"  path cache misses:    {stats['path_cache_misses']}", file=sys.stderr)
 
+    if stats["option_sets_planned"]:
+        print(f"  option sets planned:  {stats['option_sets_planned']}", file=sys.stderr)
+        print(f"  option sets loaded:   {stats['option_sets']}", file=sys.stderr)
+        print(f"  option sets skipped:  {stats['option_sets_skipped']}", file=sys.stderr)
+        print(f"  option set errors:    {stats['option_set_errors']}", file=sys.stderr)
+
     print(f"  results:              {stats['results']}", file=sys.stderr)
     print(f"  peak rss:             {stats['peak_rss_mib']:.1f} MiB", file=sys.stderr)
 
@@ -81,6 +87,10 @@ def new_stats():
         "path_cache_hits": 0,
         "path_cache_misses": 0,
         "results": 0,
+        "option_sets_planned": 0,
+        "option_sets": 0,
+        "option_sets_skipped": 0,
+        "option_set_errors": 0,
         "load_seconds": 0.0,
         "project_load_seconds": 0.0,
         "cache_check_seconds": 0.0,

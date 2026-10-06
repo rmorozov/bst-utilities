@@ -17,12 +17,89 @@ from . import (
     cli,
     discovery,
     mounts,
+    option_space,
     output,
     search_cas,
     search_fuse,
     source_cache,
 )
 from . import stats as metrics
+
+
+def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=None):
+    """Create a Stream and toplevel Project for one option set and load the target."""
+    # The scheduler only runs for --fetch-subprojects; it calls both
+    # callbacks unconditionally, so provide non-interactive ones.
+    stream = Stream(
+        ctx,
+        datetime.now(),
+        interrupt_callback=lambda: stream.terminate(),
+        ticker_callback=lambda: None,
+    )
+    # Owned by the caller from here, so a failed load is still cleaned up.
+    streams.append(stream)
+    stream.init()
+    project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
+    stream.set_project(project)
+    return stream, project, adapter.call_load_selection(stream, args.target, selection)
+
+
+def _plan_option_sets(args, stats):
+    """Return the option sets to load for --all-options, or None on error."""
+    declarations = adapter.declared_options(args.directory)
+    pinned = dict(args.option)
+    axes, held = option_space.plan(declarations, pinned)
+    args.planned_options = {d.name for d in declarations} | set(pinned)
+
+    for name, reason in held:
+        if reason != "pinned with -o":
+            print(f"NOTE: option {name} is held at its configured value: {reason}", file=sys.stderr)
+
+    size = option_space.space_size(axes)
+    if size > args.max_option_sets:
+        counts = ", ".join(f"{axis.name}={len(axis.values)}" for axis in axes)
+        print(
+            f"error: --all-options would load {size} option sets ({counts}), more than "
+            f"--max-option-sets {args.max_option_sets}\n"
+            "hint: pin options with -o KEY VALUE or raise --max-option-sets",
+            file=sys.stderr,
+        )
+        return None
+
+    stats["option_sets_planned"] = size
+    return list(option_space.iter_option_sets(axes, declarations))
+
+
+def _report_option_set_failure(args, stats, option_set, exc):
+    label = option_space.label(option_set)
+    if adapter.is_user_assertion(exc):
+        # The project declares this combination unsupported with (!).
+        stats["option_sets_skipped"] += 1
+        print(f"NOTE: skipped option set [{label}]: {exc}", file=sys.stderr)
+        return
+
+    stats["option_set_errors"] += 1
+    if args.traceback:
+        traceback.print_exc()
+    print(f"ERROR: could not load option set [{label}]: {exc}", file=sys.stderr)
+
+
+def _warn_unplanned_options(args, project):
+    """Options declared through includes were not enumerated; say so once each."""
+    for name in sorted(adapter.project_option_names(project) - args.planned_options):
+        args.planned_options.add(name)
+        print(
+            f"NOTE: option {name} is not declared in project.conf directly and was "
+            "not enumerated; pin it with -o to search another value",
+            file=sys.stderr,
+        )
+
+
+def _with_option_set_errors(exit_code, stats):
+    """An option set that failed to load makes any search incomplete."""
+    if stats["option_set_errors"] > 0:
+        return 2
+    return exit_code
 
 
 def _main() -> int:
@@ -97,7 +174,7 @@ def _main() -> int:
         ctx_manager = nullcontext(context)
 
     exit_code = 2
-    stream = None
+    streams = []
     mount_manager = None
     out = output.LineBuffer()
 
@@ -112,25 +189,50 @@ def _main() -> int:
                 ctx.load(args.config)
                 adapter.attach_dummy_message_handler(ctx)
 
-                # The scheduler only runs for --fetch-subprojects; it calls both
-                # callbacks unconditionally, so provide non-interactive ones.
-                stream = Stream(
-                    ctx,
-                    datetime.now(),
-                    interrupt_callback=lambda: stream.terminate(),
-                    ticker_callback=lambda: None,
-                )
-                stream.init()
-                project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects)
-                stream.set_project(project)
+                option_sets = [None]
+                if args.all_options:
+                    option_sets = _plan_option_sets(args, stats)
+                    if option_sets is None:
+                        exit_code = 2
+                        return exit_code
 
-                elements = adapter.call_load_selection(stream, args.target, selection)
-                stats["project_load_seconds"] = time.monotonic() - load_start
-                phase_start = time.monotonic()
-                stats["cache_checks"] = source_cache.prefetch_source_cache_state(
-                    elements, ctx, min(source_cache.CACHE_CHECK_WORKERS, 2 * (os.cpu_count() or 1))
-                )
-                stats["cache_check_seconds"] = time.monotonic() - phase_start
+                loaded = []
+                for option_set in option_sets:
+                    if option_set is None:
+                        cli_options = None
+                    else:
+                        cli_options = option_space.cli_options(args.option, option_set)
+                        adapter.reset_toplevel_project(ctx)
+                    try:
+                        _, project, elements = _load_selection(
+                            ctx, Project, Stream, args, selection, streams, cli_options
+                        )
+                    except (KeyboardInterrupt, BrokenPipeError):
+                        raise
+                    except Exception as exc:
+                        if option_set is None:
+                            raise
+                        _report_option_set_failure(args, stats, option_set, exc)
+                        continue
+                    if option_set is not None:
+                        stats["option_sets"] += 1
+                        _warn_unplanned_options(args, project)
+                    elapsed = time.monotonic() - load_start
+                    stats["project_load_seconds"] = elapsed - stats["cache_check_seconds"]
+
+                    phase_start = time.monotonic()
+                    stats["cache_checks"] += source_cache.prefetch_source_cache_state(
+                        elements,
+                        ctx,
+                        min(source_cache.CACHE_CHECK_WORKERS, 2 * (os.cpu_count() or 1)),
+                    )
+                    stats["cache_check_seconds"] += time.monotonic() - phase_start
+                    loaded.append((option_set, elements))
+
+                if not loaded:
+                    print("error: no option set could be loaded", file=sys.stderr)
+                    exit_code = 2
+                    return exit_code
 
                 cas_dir = None
 
@@ -156,13 +258,16 @@ def _main() -> int:
                         exit_code = 2
                         return exit_code
 
-                trees = catalogue.discover_trees(elements, args, stats, use_fuse)
+                trees = {}
+                for option_set, elements in loaded:
+                    catalogue.discover_trees(elements, args, stats, use_fuse, trees, option_set)
 
                 stats["load_seconds"] = time.monotonic() - load_start
 
                 exit_code = 1
                 if (
-                    stats["uncached_elements"] > 0
+                    stats["option_set_errors"] > 0
+                    or stats["uncached_elements"] > 0
                     or stats["unresolved_elements"] > 0
                     or (use_fuse and stats["no_digest_elements"] > 0)
                 ):
@@ -184,7 +289,8 @@ def _main() -> int:
                 # ------------------------------------------------------------
 
                 if not use_fuse:
-                    return search_cas.search_cas(trees, args, stats, cas_dir, emitter)
+                    exit_code = search_cas.search_cas(trees, args, stats, cas_dir, emitter)
+                    return _with_option_set_errors(exit_code, stats)
 
                 # ------------------------------------------------------------
                 # FUSE mount phase
@@ -200,6 +306,7 @@ def _main() -> int:
                 )
 
                 exit_code = search_fuse.search_fuse(trees, args, stats, mount_manager, emitter)
+                exit_code = _with_option_set_errors(exit_code, stats)
 
             except (KeyboardInterrupt, BrokenPipeError):
                 raise
@@ -222,7 +329,8 @@ def _main() -> int:
                         stats["peak_mounts"] = mount_manager.peak
                         stats["fuse_processes"] = mount_manager.started
                 finally:
-                    adapter.cleanup_stream(stream)
+                    for stream in streams:
+                        adapter.cleanup_stream(stream)
 
     except BrokenPipeError:
         raise

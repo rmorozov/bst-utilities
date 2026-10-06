@@ -39,7 +39,11 @@ bst source fetch --deps all default_elements.bst
 bst-source-grep default_elements.bst --find '*.h'
 bst-source-grep default_elements.bst 'pthread_create' -n --glob '*.c'
 bst-source-grep default_elements.bst --find '*.h' --exclude 'vendor/**' --json --stats
+bst-source-grep default_elements.bst 'pthread_create' --all-options --json
 ```
+
+`--all-options` searches the union of sources reached under every combination of
+the toplevel project's options, attributing each JSON record to its option sets.
 
 Source tracking is optional when you want to update refs; this helper never
 tracks or fetches element sources. Missing caches produce exit status 2.

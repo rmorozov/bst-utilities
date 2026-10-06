@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import sys
 
-from . import adapter, cas_layout, origins, paths, source_cache
+from . import adapter, cas_layout, option_space, origins, paths, source_cache
 
 
-def discover_trees(elements, args, stats, use_fuse):
-    trees = {}
+def discover_trees(elements, args, stats, use_fuse, trees=None, option_set=None):
+    """
+    Group `elements` into `trees` (a new dict unless one is passed in).
+
+    With `option_set`, the elements came from one --all-options load: an
+    element whose name already reached the same tree under another option set
+    gains that set in its "option_sets" list instead of a second entry.
+    """
+    if trees is None:
+        trees = {}
+    context = f" [options: {option_space.label(option_set)}]" if option_set is not None else ""
 
     # ------------------------------------------------------------
     # Pass 1: discover unique source trees
@@ -29,7 +38,7 @@ def discover_trees(elements, args, stats, use_fuse):
         if status == "unresolved":
             stats["unresolved_elements"] += 1
             print(
-                f"ERROR: source refs are unresolved: {label} ({detail})",
+                f"ERROR: source refs are unresolved: {label} ({detail}){context}",
                 file=sys.stderr,
             )
             continue
@@ -39,7 +48,7 @@ def discover_trees(elements, args, stats, use_fuse):
             message = f"ERROR: source tree is not cached: {label}"
             if detail:
                 message += f" ({detail})"
-            print(message, file=sys.stderr)
+            print(message + context, file=sys.stderr)
             continue
 
         stats["cached_elements"] += 1
@@ -52,7 +61,7 @@ def discover_trees(elements, args, stats, use_fuse):
 
             if use_fuse:
                 print(
-                    f"WARNING: could not determine CAS digest for: {label}",
+                    f"WARNING: could not determine CAS digest for: {label}{context}",
                     file=sys.stderr,
                 )
                 continue
@@ -69,6 +78,7 @@ def discover_trees(elements, args, stats, use_fuse):
                 "directory": directory,
                 "elements": [],
                 "recipes_seen": set(),
+                "entries": {},
                 "mountpoint": None,
                 "gitreview": origins.CasGitreviewCache(
                     directory, args.gitreview_mode, args.gitreview_nearest
@@ -78,6 +88,23 @@ def discover_trees(elements, args, stats, use_fuse):
             }
             trees[tree_key] = tree
             stats["trees"] += 1
+
+        if option_set is not None:
+            key = recipe if args.strip_junctions else label
+            existing = tree["entries"].get(key)
+            if existing is not None:
+                # Sets load one after another, so a repeat of the latest set
+                # is a second junction instance within the same load.
+                if existing["option_sets"][-1] is option_set:
+                    stats["duplicate_elements"] += 1
+                else:
+                    existing["option_sets"].append(option_set)
+                continue
+            entry = {"element": element, "label": label, "recipe": recipe}
+            entry["option_sets"] = [option_set]
+            tree["entries"][key] = entry
+            tree["elements"].append(entry)
+            continue
 
         if args.strip_junctions:
             if recipe in tree["recipes_seen"]:

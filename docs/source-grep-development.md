@@ -8,9 +8,10 @@ framework for other tools.
 
 | Module | Responsibility |
 | --- | --- |
-| `application.py` | Select the backend, own the BuildStream session, dispatch searches, finalize resources and exit statuses |
+| `application.py` | Select the backend, own the BuildStream session and each option set's stream/project, dispatch searches, finalize resources and exit statuses |
 | `cli.py` | Declare options and validate combinations; importing/help requires no BuildStream installation |
 | `adapter.py` | Load/version-check BuildStream internals, configure project/selection and message callbacks |
+| `option_space.py` | Enumerate `--all-options` combinations, caps and labels; no BuildStream import |
 | `source_cache.py` | Resolve element source state and issue cancellable concurrent cache-completeness checks |
 | `cas_layout.py` | Obtain directory digests and discover the configured local CAS location |
 | `catalogue.py` | Group selected elements into unique source trees and preserve their labels/mappings |
@@ -49,3 +50,11 @@ can skip integration tests when Unix sockets or FUSE are unavailable.
 The benchmark harness imports `discovery.find_buildbox_fuse` directly, while all
 benchmark subprocesses continue to use `python -m bst_utilities.source_grep`.
 Generated reports and temporary benchmark caches are not repository artifacts.
+
+`--all-options` keeps one Context (one casd) and creates a Stream and Project per
+option set. `adapter.reset_toplevel_project()` empties the Context's project list
+first, because BuildStream resolves `project.refs` and junction overrides through
+the first project added. Elements from earlier sets stay alive for the search;
+every stream is cleaned up at exit. `catalogue.discover_trees()` merges sets
+into one tree map, so backends and emitters need no option awareness beyond the
+`option_sets` list on element records.

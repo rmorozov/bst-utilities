@@ -129,7 +129,8 @@ def prefetch_source_cache_state(elements, ctx, workers):
     from the results. RPC futures are awaited on this thread and all of them are
     cancelled if the wait is interrupted, so Ctrl-C never waits on casd. Only
     the definite answers (OK, NOT_FOUND) are recorded; anything else, or a
-    remote cache, leaves BuildStream's own call in place.
+    remote cache, leaves BuildStream's own call in place. Repeated calls (one
+    per --all-options set) share the answers and only check new trees.
     Returns the number of trees checked.
     """
     try:
@@ -144,6 +145,8 @@ def prefetch_source_cache_state(elements, ctx, workers):
     except Exception:
         return 0
 
+    results = getattr(original, "known_directories", None)
+
     digests = {}
     for element in elements:
         try:
@@ -157,7 +160,9 @@ def prefetch_source_cache_state(elements, ctx, workers):
         except Exception:
             continue
         if proto is not None:
-            digests[(proto.files.hash, proto.files.size_bytes)] = proto.files
+            key = (proto.files.hash, proto.files.size_bytes)
+            if results is None or key not in results:
+                digests[key] = proto.files
 
     if len(digests) < 2:
         return 0
@@ -168,7 +173,9 @@ def prefetch_source_cache_state(elements, ctx, workers):
         request.fetch_file_blobs = True  # same as BuildStream without a remote cache
         return local_cas.FetchTree.future(request)
 
-    results = {}
+    installed = results is not None
+    if not installed:
+        results = {}
     queue = deque(digests.items())
     in_flight = deque()
     try:
@@ -189,12 +196,16 @@ def prefetch_source_cache_state(elements, ctx, workers):
         for _, future in in_flight:
             future.cancel()
 
+    if installed:
+        return len(digests)
+
     def contains_directory(digest, *args, **kwargs):
         known = results.get((digest.hash, digest.size_bytes))
         if known is None or args or kwargs:
             return original(digest, *args, **kwargs)
         return known
 
+    contains_directory.known_directories = results
     cas.contains_directory = contains_directory
     return len(digests)
 

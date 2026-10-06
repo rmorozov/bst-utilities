@@ -70,6 +70,9 @@ class ResultEmitter:
             if self.args.origin and origin is not None:
                 record["origin"] = origin
 
+            if "option_sets" in element_info:
+                record["option_sets"] = element_info["option_sets"]
+
             self.out.emit_json(record)
         else:
             if self.args.origin and origin is not None:
@@ -100,6 +103,9 @@ class ResultEmitter:
 
             if self.args.origin and origin is not None:
                 record["origin"] = origin
+
+            if "option_sets" in element_info:
+                record["option_sets"] = element_info["option_sets"]
 
             self.out.emit_json(record)
         else:

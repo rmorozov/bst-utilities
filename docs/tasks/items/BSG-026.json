@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-026",
+    "tool": "bst-source-grep",
+    "title": "Search the union of sources across the toplevel project's option space",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "M",
+    "problem": "Project options select sources, dependencies, variable-expanded source configuration and junction options through (?) conditionals and exported variables, so a search under one option set misses sources that other supported configurations reach.",
+    "proposal": "Add --all-options: read the toplevel project.conf option declarations, enumerate bool/enum/arch/os/flags values (holding element-mask and -o pinned options), load each option set as the toplevel project in one BuildStream session, merge trees by digest and attribute each element record with the option sets that reached it.",
+    "acceptance": [
+      "The union of option sets finds sources selected by conditional sources, conditional dependencies, option-exported source variables and options forwarded through junctions.",
+      "Combinations rejected by a project (!) assertion are skipped with a note; other load failures and uncached trees name their option set and exit 2.",
+      "A configurable cap refuses combinatorial explosions before loading; -o pins an option.",
+      "Each unique tree is searched once; JSON records list every option set that reached them and text output keeps its format.",
+      "Runs without --all-options keep their output, statuses and records."
+    ],
+    "depends_on": [],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh.",
+      "tests/test_option_space.py and test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1 with FUSE; full suite 131 passed locally."
+    ]
+  }
+}
