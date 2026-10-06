@@ -21,7 +21,8 @@
     ],
     "evidence": [
       "Branch claude/source-grep-all-options-eheilh (after PR #8).",
-      "Unit tests in tests/test_option_space.py and the template/file round trip in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1."
+      "Unit tests in tests/test_option_space.py and the template/file round trip in test_all_options_searches_union_of_option_sets pass against BuildStream 2.8.1.",
+      "Review of 30de0f4: templates keep an options file's restrictions and quote values YAML-safely; regression tests for load-render-load and commas, brackets, hashes, quotes, backslashes, newlines and empty values."
     ]
   }
 }

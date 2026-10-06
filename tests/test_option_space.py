@@ -336,7 +336,7 @@ def test_template_round_trips_through_buildstream_yaml(tmp_path):
     text = option_space.render_template("proj", declarations, {"debug": "true"})
     assert "  debug: true" in text
     assert "  # arch: [x86_64, aarch64, riscv64]" in text
-    assert "  # mode: ['', x]" in text
+    assert '  # mode: ["", x]' in text
     assert "  # feats: []" in text
     assert "not enumerated by --all-options" in text
 
@@ -349,7 +349,7 @@ def test_template_round_trips_through_buildstream_yaml(tmp_path):
     edited = tmp_path / "edited.yml"
     edited.write_text(
         text.replace("  # arch: [x86_64, aarch64, riscv64]", "  arch: [x86_64, riscv64]")
-        .replace("  # mode: ['', x]", "  mode: ['', x]")
+        .replace('  # mode: ["", x]', "  mode: ['', x]")
         .replace("  # feats: []", "  feats: [[a]]")
     )
     pins, restrictions = option_space.parse_options_file(
@@ -409,3 +409,70 @@ def test_prepare_merges_file_and_command_line(monkeypatch, tmp_path, capsys, all
     assert "lists several values for arch, mode; that needs --all-options" in (
         capsys.readouterr().err
     )
+
+
+TRICKY = ("a,b", "a]b", "a # b", 'q"uote', "back\\slash", "new\nline", "", "null", "x: y", "plain")
+
+
+def _uncomment(text, name):
+    return text.replace(f"  # {name}: ", f"  {name}: ")
+
+
+def _load_text(tmp_path, text):
+    path = tmp_path / "options.yml"
+    path.write_text(text)
+    return adapter.load_options_file(str(path))
+
+
+def test_template_values_survive_yaml_exactly(tmp_path):
+    pytest.importorskip("buildstream")
+    declarations = [
+        Declaration("mode", "enum", TRICKY, "a # b"),
+        Declaration("feats", "flags", ("p]q", "r # s", "t"), "t"),
+    ]
+    text = option_space.render_template("proj", declarations, {})
+    # Untouched, every line is a comment or the empty mapping.
+    assert option_space.parse_options_file(_load_text(tmp_path, text), declarations) == ({}, {})
+    # Uncommented, the example lists every value exactly once and unchanged.
+    pins, restrictions = option_space.parse_options_file(
+        _load_text(tmp_path, _uncomment(_uncomment(text, "mode"), "feats")), declarations
+    )
+    assert restrictions == {"mode": TRICKY}
+    assert pins == {"feats": "t"}
+    # Pins of each awkward value load back as that value.
+    for value in TRICKY:
+        pinned = option_space.render_template("proj", declarations, {"mode": value})
+        pins, _ = option_space.parse_options_file(_load_text(tmp_path, pinned), declarations)
+        assert pins == {"mode": value}
+
+
+def test_template_from_options_file_reproduces_its_choices(tmp_path):
+    pytest.importorskip("buildstream")
+    declarations = _declarations()
+    pins = {"debug": "false"}
+    restrictions = {
+        "arch": ("riscv64",),
+        "mode": ("", "x"),
+        "feats": ("a,b", ""),
+        "mask": ("b.bst",),
+    }
+    text = option_space.render_template("proj", declarations, pins, restrictions)
+    loaded = option_space.parse_options_file(_load_text(tmp_path, text), declarations)
+    assert loaded == (pins, restrictions)
+
+    def planned(p, r):
+        axes, held = option_space.plan(declarations, p, r)
+        return held, list(option_space.iter_option_sets(axes, declarations))
+
+    assert planned(*loaded) == planned(pins, restrictions)
+
+
+def test_template_switch_renders_existing_restrictions(monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    monkeypatch.setattr(adapter, "load_api", lambda: None)
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations()))
+    monkeypatch.setattr(adapter, "load_options_file", lambda path: {"arch": ["riscv64"]})
+    args = cli.parse_args(["--options-template", "--options-file", "o.yml"])
+    assert application._describe_options(args) == 0
+    assert "\n  arch: [riscv64]\n" in capsys.readouterr().out

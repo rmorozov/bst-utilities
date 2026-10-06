@@ -644,10 +644,11 @@ config:
     # Template -> edited options file -> search: narrow flavour, pin extra.
     template = search("--options-template")
     assert template.returncode == 0, template.stderr
+    # "y" is a YAML 1.1 boolean, so the template quotes it.
     assert (
-        "  # flavour: [x, y]" in template.stdout and "  # extra: [false, true]" in template.stdout
+        '  # flavour: [x, "y"]' in template.stdout and "  # extra: [false, true]" in template.stdout
     )
-    edited = template.stdout.replace("  # flavour: [x, y]", "  flavour: [y]")
+    edited = template.stdout.replace('  # flavour: [x, "y"]', '  flavour: ["y"]')
     edited = edited.replace("  # extra: [false, true]", "  extra: false")
     options_file = tmp_path / "options.yml"
     options_file.write_text(edited)

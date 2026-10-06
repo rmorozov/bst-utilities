@@ -132,7 +132,10 @@ you do not need. In the file:
 `-o KEY VALUE` overrides the file for that option. Without `--all-options`, a
 one-value list is a pin and a longer list is an error. `--list-options` also
 reads `-o` and `--options-file` and shows how many values each option
-contributes, so you can see the product before running a search. When the cap is
+contributes, so you can see the product before running a search. `--options-template
+--options-file FILE` writes that file's pins and value lists back as active entries,
+so a template can be regenerated without losing choices. Values that are not plain
+words are written as double-quoted YAML strings. When the cap is
 exceeded, the error points to these options. Values are validated against
 `project.conf`; unknown names or values fail before loading.
 

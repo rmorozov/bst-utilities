@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import itertools
+import json
+import re
 import textwrap
 from dataclasses import dataclass
 
@@ -201,7 +203,8 @@ def parse_options_file(options, declarations):
     element-mask, a list of lists) restricts --all-options to those values.
     Values are returned in the command-line form option_values() uses.
     """
-    if options is None:
+    if options is None or options == "":
+        # An empty `options:` (every entry commented out) loads as "".
         return {}, {}
     if not isinstance(options, dict):
         raise OptionsFileError("'options' must be a mapping of option names to values")
@@ -229,18 +232,33 @@ def parse_options_file(options, declarations):
     return pins, restrictions
 
 
+# Plain YAML scalars that need no quoting; anything else is double-quoted.
+_PLAIN_SCALAR = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./+=-]*")
+_YAML_WORDS = {"null", "~", "true", "false", "yes", "no", "on", "off", "y", "n"}
+
+
+def _yaml_scalar(value):
+    """A YAML scalar that loads back as exactly `value`, on one line."""
+    if _PLAIN_SCALAR.fullmatch(value) and value.lower() not in _YAML_WORDS:
+        return value
+    # A JSON string is a valid YAML double-quoted scalar with all escapes.
+    return json.dumps(value)
+
+
+def _set_names(value):
+    return value.split(",") if value else []
+
+
 def _describe(declaration):
     """Type, default and possible values of one option, as comment lines."""
-    default = declaration.default
-    if declaration.type in SET_TYPES:
-        default = f"[{default}]"
+    default = _yaml_value(declaration, declaration.default or "")
     lines = [f"{declaration.name} ({declaration.type}), default: {default}"]
     if declaration.type == "bool":
         values = "true, false"
     elif declaration.type in SET_TYPES:
-        values = f"any set of: {', '.join(declaration.values)}"
+        values = "any set of: " + ", ".join(_yaml_scalar(v) for v in declaration.values)
     else:
-        values = ", ".join(repr(v) if v == "" else v for v in declaration.values)
+        values = ", ".join(_yaml_scalar(v) for v in declaration.values)
     lines += textwrap.wrap(f"values: {values}", 76, subsequent_indent="  ")
     if declaration.type == "element-mask":
         lines.append("not enumerated by --all-options; pin it or list the sets to search")
@@ -248,20 +266,28 @@ def _describe(declaration):
 
 
 def _yaml_value(declaration, value):
+    """One value in options-file form: a scalar, or a flow list for a set."""
     if declaration.type in SET_TYPES:
-        return "[" + ", ".join(value.split(",") if value else []) + "]"
-    if value == "" or value[:1] in "[{&*!|>'\"%@`#" or ":" in value:
-        return repr(value)
-    return value
+        return "[" + ", ".join(_yaml_scalar(name) for name in _set_names(value)) + "]"
+    if declaration.type == "bool":
+        return value
+    return _yaml_scalar(value)
 
 
-def render_template(project_name, declarations, pinned):
+def _yaml_list(declaration, values):
+    return "[" + ", ".join(_yaml_value(declaration, value) for value in values) + "]"
+
+
+def render_template(project_name, declarations, pinned, restrictions=None):
     """
-    An options file listing every option, commented out unless pinned.
+    An options file listing every option, commented out unless set.
 
+    Pins and restrictions (from -o or an existing options file) are written as
+    active entries, so rendering a loaded file reproduces its choices.
     Uncommenting `name: value` pins an option; `name: [a, b]` limits
     --all-options to those values.
     """
+    restrictions = restrictions or {}
     lines = [
         f"# Options of BuildStream project '{project_name}' for bst-source-grep.",
         "# Pass this file with --options-file. Uncomment a line to use it:",
@@ -280,12 +306,13 @@ def render_template(project_name, declarations, pinned):
         name = declaration.name
         if name in pinned:
             lines.append(f"  {name}: {_yaml_value(declaration, pinned[name])}")
+        elif name in restrictions:
+            lines.append(f"  {name}: {_yaml_list(declaration, restrictions[name])}")
         elif declaration.type in SET_TYPES:
             lines.append(f"  # {name}: {_yaml_value(declaration, declaration.default or '')}")
         else:
             # Every value: delete the ones not to search, or keep one to pin it.
-            values = ", ".join(_yaml_value(declaration, v) for v in option_values(declaration))
-            lines.append(f"  # {name}: [{values}]")
+            lines.append(f"  # {name}: {_yaml_list(declaration, option_values(declaration))}")
     return "\n".join(lines) + "\n"
 
 

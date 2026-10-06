@@ -122,7 +122,9 @@ def _describe_options(args):
     if status is not None:
         return status
     if args.options_template:
-        text = option_space.render_template(args.project_name, args.declarations, args.pins)
+        text = option_space.render_template(
+            args.project_name, args.declarations, args.pins, args.restrictions
+        )
     else:
         text = option_space.render_listing(args.declarations, args.pins, args.restrictions)
     sys.stdout.write(text)
