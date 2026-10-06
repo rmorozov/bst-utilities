@@ -1,6 +1,7 @@
 """--all-options enumeration, attribution and option-set merging."""
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,7 @@ def test_application_rejects_flags_explosion_before_enumerating(monkeypatch, cap
         option_space, "option_values", lambda d: pytest.fail("enumerated before cap")
     )
     args = cli.parse_args(["t.bst", "--find", "*", "--all-options"])
+    assert application._prepare_options(args) is None
     assert application._plan_option_sets(args, stats.new_stats()) is None
     assert "would load 1099511627776 option sets (f=1099511627776)" in capsys.readouterr().err
 
@@ -263,3 +265,214 @@ def test_empty_flags_overrides_replace_user_configuration_temporarily():
         assert empty._project_overrides.strip_node_info() == {"opts": {"options": {"feats": []}}}
     with adapter.empty_flags_overrides(SimpleNamespace(), "opts", []):
         pass
+
+
+def _declarations():
+    return [
+        Declaration("debug", "bool", (), "false"),
+        Declaration("arch", "arch", ("x86_64", "aarch64", "riscv64"), "x86_64"),
+        Declaration("mode", "enum", ("", "x"), ""),
+        Declaration("feats", "flags", ("a", "b"), ""),
+        Declaration("mask", "element-mask", ("a.bst", "b.bst"), ""),
+    ]
+
+
+def test_options_file_pins_and_restrictions():
+    pins, restrictions = option_space.parse_options_file(
+        {
+            "debug": "True",
+            "arch": ["aarch64", "x86_64", "aarch64"],
+            "mode": "",
+            "feats": [["b", "a"], []],
+            "mask": ["b.bst"],
+        },
+        _declarations(),
+    )
+    assert pins == {"debug": "true", "mode": "", "mask": "b.bst"}
+    assert restrictions == {"arch": ("aarch64", "x86_64"), "feats": ("a,b", "")}
+    # A flat list (or a comma string) is one flags value: a pin.
+    assert option_space.parse_options_file({"feats": "b, a"}, _declarations())[0] == {
+        "feats": "a,b"
+    }
+    assert option_space.parse_options_file(None, _declarations()) == ({}, {})
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ({"nope": "x"}, "not an option declared"),
+        ({"arch": "sparc"}, "is not one of"),
+        ({"debug": "maybe"}, "expected true or false"),
+        ({"feats": ["c"]}, "unknown value(s) c"),
+        ({"arch": []}, "selects no value"),
+        ({"arch": [["x86_64"]]}, "expected one value"),
+        (["arch"], "must be a mapping"),
+    ],
+)
+def test_options_file_errors(options, message):
+    with pytest.raises(option_space.OptionsFileError, match=re.escape(message)):
+        option_space.parse_options_file(options, _declarations())
+
+
+def test_restrictions_become_axes_and_attribution():
+    declarations = _declarations()
+    axes, held = option_space.plan(
+        declarations, {"debug": "true"}, {"arch": ("aarch64",), "mask": ("", "a.bst")}
+    )
+    assert [(a.name, a.count) for a in axes] == [
+        ("arch", 1),
+        ("mode", 2),
+        ("feats", 4),
+        ("mask", 2),
+    ]
+    assert held == [("debug", "pinned")]
+    sets = list(option_space.iter_option_sets(axes, declarations))
+    assert len(sets) == 16 and {s["arch"] for s in sets} == {"aarch64"}
+
+
+def test_template_round_trips_through_buildstream_yaml(tmp_path):
+    pytest.importorskip("buildstream")
+    declarations = _declarations()
+    text = option_space.render_template("proj", declarations, {"debug": "true"})
+    assert "  debug: true" in text
+    assert "  # arch: [x86_64, aarch64, riscv64]" in text
+    assert '  # mode: ["", x]' in text
+    assert "  # feats: []" in text
+    assert "not enumerated by --all-options" in text
+
+    untouched = tmp_path / "untouched.yml"
+    untouched.write_text(text)
+    assert option_space.parse_options_file(
+        adapter.load_options_file(str(untouched)), declarations
+    ) == ({"debug": "true"}, {})
+
+    edited = tmp_path / "edited.yml"
+    edited.write_text(
+        text.replace("  # arch: [x86_64, aarch64, riscv64]", "  arch: [x86_64, riscv64]")
+        .replace('  # mode: ["", x]', "  mode: ['', x]")
+        .replace("  # feats: []", "  feats: [[a]]")
+    )
+    pins, restrictions = option_space.parse_options_file(
+        adapter.load_options_file(str(edited)), declarations
+    )
+    assert pins == {"debug": "true"}
+    assert restrictions == {"arch": ("x86_64", "riscv64"), "mode": ("", "x"), "feats": ("a",)}
+
+    bad = tmp_path / "bad.yml"
+    bad.write_text("option:\n  debug: true\n")
+    with pytest.raises(option_space.OptionsFileError, match="unknown top-level"):
+        adapter.load_options_file(str(bad))
+
+
+def test_listing_shows_pins_restrictions_and_counts():
+    text = option_space.render_listing(
+        _declarations(), {"debug": "true"}, {"arch": ("aarch64", "x86_64")}
+    )
+    lines = text.splitlines()
+    assert lines[0] == "debug (bool), default: false  [pinned to 'true']"
+    assert "arch (arch), default: x86_64  [--all-options tries 2: 'aarch64', 'x86_64']" in lines
+    assert "feats (flags), default: []  [--all-options tries 4]" in lines
+    assert "mask (element-mask), default: []  [held]" in lines
+
+
+def test_cli_describe_modes_need_no_target():
+    args = cli.parse_args(["--list-options"])
+    assert args.list_options and args.target is None
+    assert cli.parse_args(["--options-template", "-C", "/p"]).options_template
+    for argv in (["--find", "*"], ["--list-options", "--options-template"]):
+        with pytest.raises(SystemExit):
+            cli.parse_args(argv)
+
+
+@pytest.mark.parametrize("all_options", [False, True])
+def test_prepare_merges_file_and_command_line(monkeypatch, tmp_path, capsys, all_options):
+    from bst_utilities._source_grep import application
+
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations()))
+    raw = {"debug": "true", "arch": ["aarch64"], "mode": ["", "x"], "feats": []}
+    monkeypatch.setattr(adapter, "load_options_file", lambda path: raw)
+    argv = ["t.bst", "--find", "*", "--options-file", "o.yml", "-o", "mode", "x"]
+    args = cli.parse_args(argv + (["--all-options"] if all_options else []))
+    assert application._prepare_options(args) is None
+    # -o replaces the file's mode list; the empty flags pin needs an override.
+    assert args.pinned_empty == ["feats"]
+    if all_options:
+        assert args.restrictions == {"arch": ("aarch64",)}
+        assert args.option == [("debug", "true"), ("mode", "x")]
+    else:
+        assert args.restrictions == {}
+        assert args.option == [("debug", "true"), ("mode", "x"), ("arch", "aarch64")]
+
+    raw["arch"] = ["aarch64", "x86_64"]
+    args = cli.parse_args(["t.bst", "--find", "*", "--options-file", "o.yml"])
+    assert application._prepare_options(args) == 2
+    assert "lists several values for arch, mode; that needs --all-options" in (
+        capsys.readouterr().err
+    )
+
+
+TRICKY = ("a,b", "a]b", "a # b", 'q"uote', "back\\slash", "new\nline", "", "null", "x: y", "plain")
+
+
+def _uncomment(text, name):
+    return text.replace(f"  # {name}: ", f"  {name}: ")
+
+
+def _load_text(tmp_path, text):
+    path = tmp_path / "options.yml"
+    path.write_text(text)
+    return adapter.load_options_file(str(path))
+
+
+def test_template_values_survive_yaml_exactly(tmp_path):
+    pytest.importorskip("buildstream")
+    declarations = [
+        Declaration("mode", "enum", TRICKY, "a # b"),
+        Declaration("feats", "flags", ("p]q", "r # s", "t"), "t"),
+    ]
+    text = option_space.render_template("proj", declarations, {})
+    # Untouched, every line is a comment or the empty mapping.
+    assert option_space.parse_options_file(_load_text(tmp_path, text), declarations) == ({}, {})
+    # Uncommented, the example lists every value exactly once and unchanged.
+    pins, restrictions = option_space.parse_options_file(
+        _load_text(tmp_path, _uncomment(_uncomment(text, "mode"), "feats")), declarations
+    )
+    assert restrictions == {"mode": TRICKY}
+    assert pins == {"feats": "t"}
+    # Pins of each awkward value load back as that value.
+    for value in TRICKY:
+        pinned = option_space.render_template("proj", declarations, {"mode": value})
+        pins, _ = option_space.parse_options_file(_load_text(tmp_path, pinned), declarations)
+        assert pins == {"mode": value}
+
+
+def test_template_from_options_file_reproduces_its_choices(tmp_path):
+    pytest.importorskip("buildstream")
+    declarations = _declarations()
+    pins = {"debug": "false"}
+    restrictions = {
+        "arch": ("riscv64",),
+        "mode": ("", "x"),
+        "feats": ("a,b", ""),
+        "mask": ("b.bst",),
+    }
+    text = option_space.render_template("proj", declarations, pins, restrictions)
+    loaded = option_space.parse_options_file(_load_text(tmp_path, text), declarations)
+    assert loaded == (pins, restrictions)
+
+    def planned(p, r):
+        axes, held = option_space.plan(declarations, p, r)
+        return held, list(option_space.iter_option_sets(axes, declarations))
+
+    assert planned(*loaded) == planned(pins, restrictions)
+
+
+def test_template_switch_renders_existing_restrictions(monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    monkeypatch.setattr(adapter, "load_api", lambda: None)
+    monkeypatch.setattr(adapter, "declared_options", lambda directory: ("p", _declarations()))
+    monkeypatch.setattr(adapter, "load_options_file", lambda path: {"arch": ["riscv64"]})
+    args = cli.parse_args(["--options-template", "--options-file", "o.yml"])
+    assert application._describe_options(args) == 0
+    assert "\n  arch: [riscv64]\n" in capsys.readouterr().out
