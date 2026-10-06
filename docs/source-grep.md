@@ -93,9 +93,14 @@ a subproject declares but its junction does not set stay at their defaults.
 | `element-mask` | Not enumerated (its values are every `.bst` file); held at the configured value |
 
 Options pinned with `-o` are held. Enumerated values override user-configuration
-option values. Options declared only through a project.conf include are not
-seen before loading; a note names each one held at its configured value. The
-project-default combination is loaded first when every default is a listed value.
+option values. Declarations reached through `(@)` includes of the project's own
+files, at the top level or inside `options:` and nested to any depth, are read as
+BuildStream's first loading pass composes them, so they are listed and enumerated
+like ones written in `project.conf`. A file included from a junction
+(`sub.bst:include/options.yml`) needs that subproject loaded first; a note names
+each such include, and after loading a note names each option it declared, held
+at its configured value (pin it with `-o`). The project-default combination is
+loaded first when every default is a listed value.
 
 The product of value counts (2^N for N flags) must not exceed `--max-option-sets`
 (default 64); it is computed before any value is enumerated, and otherwise the run
