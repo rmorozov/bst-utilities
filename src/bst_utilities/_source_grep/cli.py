@@ -84,6 +84,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--all-elements",
+        action="store_true",
+        help=(
+            "search every element under the project's element path instead of TARGET; "
+            "give only PATTERN (or --find)"
+        ),
+    )
+
+    parser.add_argument(
         "target",
         nargs="?",
         help="BuildStream element, e.g. default_elements.bst",
@@ -318,8 +327,13 @@ def parse_args(argv=None):
         # These describe the project; a target or pattern is not needed.
         return args
 
-    if args.target is None:
-        parser.error("TARGET is required")
+    if args.all_elements:
+        if args.pattern is not None:
+            parser.error("TARGET cannot be used together with --all-elements")
+        # With no TARGET, the only positional argument is the pattern.
+        args.pattern, args.target = args.target, None
+    elif args.target is None:
+        parser.error("TARGET is required unless --all-elements is used")
 
     if args.fetch_sources:
         # Sources inside a junction cannot be fetched without its subproject.

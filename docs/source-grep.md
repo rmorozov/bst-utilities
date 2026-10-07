@@ -19,10 +19,22 @@ no FUSE mount, not no daemon.
 ```sh
 bst-source-grep TARGET PATTERN [options]
 bst-source-grep TARGET --find GLOB [options]
+bst-source-grep --all-elements PATTERN [options]
 ```
+
+`--all-elements` replaces TARGET with every element file under the toplevel
+project's element path (`.bst` staging directories skipped), the list BuildStream
+uses when a project sets no default targets; `defaults: targets` is not consulted.
+`--deps` still applies to each of them, so the default `all` also searches the
+subproject elements they depend on, and `none` searches only the project's own
+recipes. A link element stands for its target. Junction elements are left out:
+their sources are a whole subproject, whose used elements are reached as
+dependencies. It combines with `--all-options`, `--fetch-sources` and the other
+options.
 
 | Option | Behavior |
 | --- | --- |
+| `--all-elements` | Search every element in the project's element path instead of TARGET (see above). |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |

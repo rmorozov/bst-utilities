@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-031",
+    "tool": "bst-source-grep",
+    "title": "Search every element in the project",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "A search always started from one TARGET and its dependencies, so recipes that no aggregating target depends on were never searched.",
+    "proposal": "Add --all-elements, which loads every element under the toplevel element path (as BuildStream lists them without default targets) instead of TARGET, applies --deps to each, and leaves junction elements out.",
+    "acceptance": [
+      "--all-elements PATTERN and --all-elements --find GLOB need no TARGET; giving TARGET too is an error.",
+      "Elements no target depends on are searched; --deps none limits results to the project's own elements; junction elements' subproject trees are not searched as recipes.",
+      "It works with --all-options and --fetch-sources; searches with TARGET are unchanged."
+    ],
+    "depends_on": [
+      "BSG-026"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (after PR #11).",
+      "test_all_elements_takes_the_only_positional_as_pattern, test_project_element_names_walk_the_element_path and the --all-elements runs in test_junctions_nested_fetch_strip_and_targets pass against BuildStream 2.8.1."
+    ]
+  }
+}

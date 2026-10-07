@@ -407,6 +407,7 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
             (root / rel).write_text(text)
         for element, text in elements.items():
+            (root / "elements" / element).parent.mkdir(parents=True, exist_ok=True)
             (root / "elements" / element).write_text(text)
 
     local = "kind: import\nsources:\n- kind: local\n  path: src\n"
@@ -429,9 +430,11 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
     project(
         main,
         "main",
-        {"src/lib.txt": "main needle\n"},
+        {"src/lib.txt": "main needle\n", "orphan/orphan.txt": "orphan needle\n"},
         {
             "lib.bst": local,
+            # No target depends on this one; only --all-elements reaches it.
+            "extra/orphan.bst": "kind: import\nsources:\n- kind: local\n  path: orphan\n",
             "sub.bst": "kind: junction\nsources:\n- kind: local\n  path: sub\n",
             "alias.bst": "kind: link\nconfig:\n  target: sub.bst:lib.bst\n",
             "app.bst": "kind: stack\ndepends:\n- lib.bst\n- alias.bst\n- sub.bst:inner.bst:leaf.bst\n",
@@ -471,6 +474,22 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         "sub.bst:inner.bst:leaf.bst:leaf.txt",
         "sub.bst:lib.bst:lib.txt",
     ], found.stderr
+    every = search("--all-elements", "--find", "*.txt", "--fetch-sources")
+    assert every.returncode == 0, every.stderr
+    assert sorted(every.stdout.splitlines()) == [
+        "extra/orphan.bst:orphan.txt",
+        "lib.bst:lib.txt",
+        "sub.bst:inner.bst:leaf.bst:leaf.txt",
+        "sub.bst:lib.bst:lib.txt",
+    ], every.stderr
+    own = search("--all-elements", "--find", "*.txt", "--deps", "none")
+    assert own.returncode == 0, own.stderr
+    # alias.bst is a link, so as a target it stands for sub.bst:lib.bst.
+    assert sorted(own.stdout.splitlines()) == [
+        "extra/orphan.bst:orphan.txt",
+        "lib.bst:lib.txt",
+        "sub.bst:lib.bst:lib.txt",
+    ]
     nested = search("sub.bst:inner.bst:leaf.bst", "--find", "*")
     assert nested.stdout.splitlines() == ["sub.bst:inner.bst:leaf.bst:leaf.txt"]
     if os.path.exists("/dev/fuse"):

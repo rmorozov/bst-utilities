@@ -245,10 +245,29 @@ def create_project(Project, context, args, fetch_subprojects=None, cli_options=N
     )
 
 
-def call_load_selection(stream, target: str, selection):
+def project_element_names(project):
+    """
+    Every element file under the project's element path, as BuildStream lists
+    them when a project has no default targets (`.bst` staging dirs skipped).
+    """
+    names = []
+    for root, dirs, files in os.walk(project.element_path):
+        dirs[:] = sorted(d for d in dirs if d != ".bst")
+        rel_dir = os.path.relpath(root, project.element_path)
+        for name in sorted(files):
+            if name.endswith(".bst"):
+                names.append(os.path.normpath(os.path.join(rel_dir, name)))
+    return names
+
+
+def is_junction(element) -> bool:
+    return element.get_kind() == "junction"
+
+
+def call_load_selection(stream, targets, selection):
     return list(
         stream.load_selection(
-            (target,),
+            tuple(targets),
             selection=selection,
             connect_artifact_cache=False,
             connect_source_cache=False,
@@ -257,9 +276,9 @@ def call_load_selection(stream, target: str, selection):
     )
 
 
-def fetch_sources(stream, target: str, selection) -> None:
+def fetch_sources(stream, targets, selection) -> None:
     """Fetch the selection's sources into the local source cache (explicitly requested)."""
-    stream.fetch((target,), selection=selection)
+    stream.fetch(tuple(targets), selection=selection)
 
 
 def release_load_state() -> None:

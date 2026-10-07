@@ -41,9 +41,24 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     stream.init()
     project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
     stream.set_project(project)
+    targets = _targets(args, project)
     if args.fetch_sources:
-        adapter.fetch_sources(stream, args.target, selection)
-    return stream, project, adapter.call_load_selection(stream, args.target, selection)
+        adapter.fetch_sources(stream, targets, selection)
+    elements = adapter.call_load_selection(stream, targets, selection)
+    if args.all_elements:
+        # A junction's sources are a whole subproject, not a recipe's sources;
+        # the subproject elements that are used are reached as dependencies.
+        elements = [element for element in elements if not adapter.is_junction(element)]
+    return stream, project, elements
+
+
+def _targets(args, project):
+    if not args.all_elements:
+        return (args.target,)
+    targets = adapter.project_element_names(project)
+    if not targets:
+        raise RuntimeError(f"no elements found under {project.element_path}")
+    return targets
 
 
 def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set):
