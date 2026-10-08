@@ -433,6 +433,8 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         {"src/lib.txt": "main needle\n", "orphan/orphan.txt": "orphan needle\n"},
         {
             "lib.bst": local,
+            # Unused, with no ref: --all-elements must not try to fetch it.
+            "unused.bst": "kind: junction\nsources:\n- kind: tar\n  url: file:///nonexistent.tar\n",
             # No target depends on this one; only --all-elements reaches it.
             "extra/orphan.bst": "kind: import\nsources:\n- kind: local\n  path: orphan\n",
             "sub.bst": "kind: junction\nsources:\n- kind: local\n  path: sub\n",
@@ -482,7 +484,7 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         "sub.bst:inner.bst:leaf.bst:leaf.txt",
         "sub.bst:lib.bst:lib.txt",
     ], every.stderr
-    own = search("--all-elements", "--find", "*.txt", "--deps", "none")
+    own = search("--all-elements", "--find", "*.txt", "--deps", "none", "--fetch-sources")
     assert own.returncode == 0, own.stderr
     # alias.bst is a link, so as a target it stands for sub.bst:lib.bst.
     assert sorted(own.stdout.splitlines()) == [

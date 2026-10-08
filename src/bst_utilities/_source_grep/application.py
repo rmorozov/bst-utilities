@@ -42,14 +42,18 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
     stream.set_project(project)
     targets = _targets(args, project)
-    if args.fetch_sources:
-        adapter.fetch_sources(stream, targets, selection)
-    elements = adapter.call_load_selection(stream, targets, selection)
     if args.all_elements:
         # A junction's sources are a whole subproject, not a recipe's sources;
         # the subproject elements that are used are reached as dependencies.
-        elements = [element for element in elements if not adapter.is_junction(element)]
-    return stream, project, elements
+        # Drop junction targets before fetching, so an unused one is never fetched.
+        roots = adapter.call_load_selection(stream, targets, adapter.make_selection("none"))
+        junctions = {adapter.element_label(e) for e in roots if adapter.is_junction(e)}
+        targets = [target for target in targets if target not in junctions]
+        if not targets:
+            raise RuntimeError(f"no elements other than junctions under {project.element_path}")
+    if args.fetch_sources:
+        adapter.fetch_sources(stream, targets, selection)
+    return stream, project, adapter.call_load_selection(stream, targets, selection)
 
 
 def _targets(args, project):

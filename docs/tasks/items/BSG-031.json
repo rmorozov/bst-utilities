@@ -20,7 +20,8 @@
     ],
     "evidence": [
       "Branch claude/source-grep-all-options-eheilh (after PR #11).",
-      "test_all_elements_takes_the_only_positional_as_pattern, test_project_element_names_walk_the_element_path and the --all-elements runs in test_junctions_nested_fetch_strip_and_targets pass against BuildStream 2.8.1."
+      "test_all_elements_takes_the_only_positional_as_pattern, test_project_element_names_walk_the_element_path and the --all-elements runs in test_junctions_nested_fetch_strip_and_targets pass against BuildStream 2.8.1.",
+      "Review of 9df5155: junction targets are dropped before --fetch-sources, so an unused junction with no ref no longer aborts --all-elements --deps none --fetch-sources (unused.bst in the junction integration fixture)."
     ]
   }
 }
