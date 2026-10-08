@@ -661,3 +661,32 @@ def test_project_element_names_walk_the_element_path(tmp_path):
         (tmp_path / rel).write_text("")
     project = SimpleNamespace(element_path=str(tmp_path))
     assert adapter.project_element_names(project) == ["b.bst", "a/x.bst"]
+
+
+def test_element_targets_read_recipes_without_instantiating_elements(monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    kinds = {"a.bst": "import", "j.bst": "junction", "link.bst": "junction", "z.bst": "import"}
+    batches = []
+
+    def load_recipes(project, names):
+        batches.append(list(names))
+        if "bad.bst" in names:
+            raise RuntimeError("missing dependency")
+        return [(kinds[name], "j.bst" if kinds[name] == "junction" else name) for name in names]
+
+    def instantiate(*_):
+        raise AssertionError("discovery must not instantiate elements")
+
+    monkeypatch.setattr(adapter, "load_recipes", load_recipes)
+    monkeypatch.setattr(adapter, "reset_loader_caches", lambda project: None)
+    monkeypatch.setattr(adapter, "call_load_selection", instantiate)
+    args = SimpleNamespace(include_subprojects=False, load_errors=0)
+    project = SimpleNamespace(element_path="elements")
+    names = ["a.bst", "bad.bst", "j.bst", "link.bst", "z.bst"]
+
+    assert application._element_targets(args, project, names) == ["a.bst", "z.bst"]
+    # One batch, then halves until the broken recipe is isolated.
+    assert batches[0] == names and ["bad.bst"] in batches and len(batches) < 2 * len(names)
+    assert args.load_errors == 1
+    assert "ERROR: could not load bad.bst: missing dependency" in capsys.readouterr().err

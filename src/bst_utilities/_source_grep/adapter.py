@@ -265,6 +265,16 @@ def junction_loader(project, junction: str):
     return project.loader.get_loader(junction, None)
 
 
+def load_recipes(project, names):
+    """
+    (kind, full name) of each of `names` as BuildStream's loader resolves it,
+    links followed, without instantiating elements or their sources.
+
+    Dependencies are read too, so a recipe with a broken dependency fails here.
+    """
+    return [(element.kind, element.full_name) for element in project.loader.load(list(names))]
+
+
 def reset_loader_caches(project) -> None:
     """
     Drop what a failed load left in the project's loaders.
@@ -282,10 +292,6 @@ def reset_loader_caches(project) -> None:
         pending += [child for child in loader._loaders.values() if child is not None]
 
 
-def is_junction(element) -> bool:
-    return element.get_kind() == "junction"
-
-
 def call_load_selection(stream, targets, selection):
     return list(
         stream.load_selection(
@@ -298,9 +304,23 @@ def call_load_selection(stream, targets, selection):
     )
 
 
-def fetch_sources(stream, targets, selection) -> None:
-    """Fetch the selection's sources into the local source cache (explicitly requested)."""
-    stream.fetch(tuple(targets), selection=selection)
+def load_and_fetch(stream, targets, selection):
+    """
+    Load the selection and fetch its sources into the local source cache
+    (explicitly requested), returning the loaded elements.
+
+    Does what Stream.fetch() does, but keeps its elements: loading the graph
+    again for the search would instantiate every element and source twice.
+    """
+    elements = stream.load_selection(
+        tuple(targets),
+        selection=selection,
+        connect_artifact_cache=False,
+        connect_source_cache=True,
+    )
+    stream.query_cache(elements, only_sources=True)
+    stream._fetch(elements, announce_session=True)
+    return list(elements)
 
 
 def release_load_state() -> None:

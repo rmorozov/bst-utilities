@@ -43,13 +43,13 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     stream.set_project(project)
     targets = _targets(args, project)
     if args.all_elements:
-        targets = _element_targets(args, stream, project, targets)
+        targets = _element_targets(args, project, targets)
     if args.fetch_sources:
-        adapter.fetch_sources(stream, targets, selection)
+        return stream, project, adapter.load_and_fetch(stream, targets, selection)
     return stream, project, adapter.call_load_selection(stream, targets, selection)
 
 
-def _element_targets(args, stream, project, names):
+def _element_targets(args, project, names):
     """
     --all-elements targets without junction elements, plus with
     --include-subprojects every element of each junctioned subproject.
@@ -66,11 +66,11 @@ def _element_targets(args, stream, project, names):
     while batches:
         subprojects = []
         for batch in batches:
-            roots = _load_roots(args, stream, project, batch)
-            targets += [name for name, element in roots if not adapter.is_junction(element)]
+            roots = _load_roots(args, project, batch)
+            targets += [name for name, (kind, _) in roots if kind != "junction"]
             if not args.include_subprojects:
                 continue
-            junctions = {adapter.element_label(e) for _, e in roots if adapter.is_junction(e)}
+            junctions = {full_name for _, (kind, full_name) in roots if kind == "junction"}
             for junction in sorted(junctions):
                 try:
                     loader = adapter.junction_loader(project, junction)
@@ -93,36 +93,25 @@ def _element_targets(args, stream, project, names):
     return targets
 
 
-def _load_roots(args, stream, project, names):
+def _load_roots(args, project, names):
     """
-    (name, element) for each of `names` that loads, without dependencies.
+    (name, (kind, full name)) for each of `names` that loads, links resolved.
 
-    Links resolve to their targets, so a name whose element comes back under
-    another name is loaded on its own to learn what it stands for. If the batch
-    fails, every name is loaded on its own and the failing ones are reported;
-    each failure's partial loader state is dropped before the next load.
+    Reads recipes with BuildStream's loader only: no element or source is
+    instantiated, so listing a large project stays cheap. A batch that fails
+    is split in halves until each failing name is found and reported; the
+    partial loader state of every failure is dropped before the next load.
     """
-    none = adapter.make_selection("none")
     try:
-        elements = adapter.call_load_selection(stream, names, none)
-    except Exception:
+        return list(zip(names, adapter.load_recipes(project, names)))
+    except Exception as exc:
         adapter.reset_loader_caches(project)
-        by_label = {}
-    else:
-        by_label = {adapter.element_label(e): e for e in elements}
-    roots = []
-    for name in names:
-        element = by_label.get(name)
-        if element is None:
-            try:
-                element = adapter.call_load_selection(stream, [name], none)[0]
-            except Exception as exc:
-                adapter.reset_loader_caches(project)
-                args.load_errors += 1
-                print(f"ERROR: could not load {name}: {exc}", file=sys.stderr)
-                continue
-        roots.append((name, element))
-    return roots
+        if len(names) == 1:
+            args.load_errors += 1
+            print(f"ERROR: could not load {names[0]}: {exc}", file=sys.stderr)
+            return []
+    middle = len(names) // 2
+    return _load_roots(args, project, names[:middle]) + _load_roots(args, project, names[middle:])
 
 
 def _targets(args, project):
