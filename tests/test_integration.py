@@ -928,6 +928,10 @@ def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_pat
         "tarred.bst": tar(f"file://{archive}"),
         # A stale orphan: its source is gone, so fetching it fails.
         "stale.bst": tar(f"file://{tmp_path / 'gone.tar'}"),
+        # Fails when instantiated, under every option set.
+        "plugin.bst": "kind: does-not-exist\n",
+        # The project declares this one unsupported for flavour b.
+        "only-a.bst": 'kind: stack\n(?):\n- flavour == "b":\n    (!): only for flavour a\n',
     }
     for name, text in elements.items():
         (project / "elements" / name).write_text(text)
@@ -936,10 +940,12 @@ def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_pat
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
 
+    report = tmp_path / "broken.jsonl"
     for options in ([], ["--all-options"]):
         result = subprocess.run(
             [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
-            + ["-C", str(project), "-a", "--find", "*.txt", "--fetch-sources", *options],
+            + ["-C", str(project), "-a", "--find", "*.txt", "--fetch-sources", *options]
+            + ["--report-broken", str(report)],
             env=env,
             capture_output=True,
             text=True,
@@ -953,3 +959,18 @@ def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_pat
             "local.bst:local.txt",
             "tarred.bst:top/tarred.txt",
         ], result.stderr
+        records = {
+            (record["stage"], record["element"]): record
+            for record in map(json.loads, report.read_text().splitlines())
+        }
+        both = [{"flavour": "a"}, {"flavour": "b"}] if options else [{"flavour": "a"}]
+        assert sorted(records) == sorted(
+            [("fetch", "stale.bst"), ("load", "plugin.bst")]
+            + ([("read", "only-a.bst")] if options else [])
+        ), records
+        assert records[("load", "plugin.bst")]["reason"] == "plugin-not-found"
+        assert records[("load", "plugin.bst")]["option_sets"] == both
+        assert "gone.tar" in records[("fetch", "stale.bst")]["error"]
+        if options:
+            assert records[("read", "only-a.bst")]["reason"] == "user-assertion"
+            assert records[("read", "only-a.bst")]["option_sets"] == [{"flavour": "b"}]

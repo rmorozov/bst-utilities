@@ -681,7 +681,7 @@ def test_element_targets_read_recipes_without_instantiating_elements(monkeypatch
     monkeypatch.setattr(adapter, "load_recipes", load_recipes)
     monkeypatch.setattr(adapter, "reset_loader_caches", lambda project: None)
     monkeypatch.setattr(adapter, "call_load_selection", instantiate)
-    args = SimpleNamespace(include_subprojects=False, load_errors=0)
+    args = SimpleNamespace(include_subprojects=False, load_errors=0, broken=None)
     project = SimpleNamespace(element_path="elements")
     names = ["a.bst", "bad.bst", "j.bst", "link.bst", "z.bst"]
 
@@ -705,7 +705,7 @@ def test_load_isolated_bisects_to_targets_that_fail_to_instantiate(monkeypatch, 
 
     monkeypatch.setattr(adapter, "reset_loader_caches", lambda project: None)
     monkeypatch.setattr(adapter, "release_load_state", lambda: None)
-    args = SimpleNamespace(load_errors=0)
+    args = SimpleNamespace(load_errors=0, broken=None)
     names = [f"e{i}.bst" for i in range(7)] + ["bad.bst"]
 
     elements = application._load_isolated(args, SimpleNamespace(), names, load)
@@ -714,3 +714,48 @@ def test_load_isolated_bisects_to_targets_that_fail_to_instantiate(monkeypatch, 
     assert loads[-1] == names[:-1] and len(loads) == 8
     assert args.load_errors == 1
     assert "ERROR: could not load bad.bst: No element plugin registered" in capsys.readouterr().err
+
+
+def test_broken_report_groups_failures_with_their_option_sets(tmp_path):
+    from bst_utilities._source_grep import broken
+
+    class Reason:
+        name = "USER_ASSERTION"
+
+    class AssertionFailed(Exception):
+        reason = Reason()
+
+    report = broken.BrokenReport()
+    report.add("read", "a.bst", AssertionFailed("only arm64"), {"arch": "x86_64"})
+    report.add("read", "a.bst", AssertionFailed("only arm64"), {"arch": "riscv64"})
+    report.add("read", "a.bst", AssertionFailed("only arm64"), {"arch": "riscv64"})
+    report.add("fetch", "b.bst", "Error mirroring", {"arch": "x86_64"})
+    report.add("option-set", None, RuntimeError(), {"arch": "arm64"})
+    path = tmp_path / "broken.jsonl"
+    report.write(str(path))
+
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert records == [
+        {
+            "stage": "read",
+            "element": "a.bst",
+            "error": "only arm64",
+            "reason": "user-assertion",
+            "option_sets": [{"arch": "x86_64"}, {"arch": "riscv64"}],
+        },
+        {
+            "stage": "fetch",
+            "element": "b.bst",
+            "error": "Error mirroring",
+            "reason": None,
+            "option_sets": [{"arch": "x86_64"}],
+        },
+        {
+            "stage": "option-set",
+            "element": None,
+            "error": "RuntimeError",
+            "reason": None,
+            "option_sets": [{"arch": "arm64"}],
+        },
+    ]
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".broken-")]

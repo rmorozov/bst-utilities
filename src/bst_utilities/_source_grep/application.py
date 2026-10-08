@@ -12,6 +12,7 @@ from datetime import datetime
 
 from . import (
     adapter,
+    broken,
     cas_layout,
     catalogue,
     cli,
@@ -41,6 +42,7 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     stream.init()
     project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
     stream.set_project(project)
+    args.current_project = project
     targets = _targets(args, project)
     if args.fetch_sources:
 
@@ -58,9 +60,25 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     if args.fetch_sources:
         # Elements whose sources failed to fetch are searched as uncached.
         for name, reason in adapter.fetch_loaded(stream, elements).items():
-            args.load_errors += 1
-            print(f"ERROR: could not fetch sources of {name}: {reason}", file=sys.stderr)
+            _report_broken(args, "fetch", name, reason)
     return stream, project, elements
+
+
+_BROKEN_MESSAGES = {
+    "read": "could not load {}",
+    "load": "could not load {}",
+    "subproject": "could not load subproject {}",
+    "fetch": "could not fetch sources of {}",
+}
+
+
+def _report_broken(args, stage, name, error):
+    """Report an element, subproject or fetch that failed; the search goes on without it."""
+    args.load_errors += 1
+    message = _BROKEN_MESSAGES[stage].format(name)
+    print(f"ERROR: {message}: {broken.error_text(error)}", file=sys.stderr)
+    if args.broken is not None:
+        args.broken.add(stage, name, error, adapter.effective_options(args.current_project))
 
 
 def _load_isolated(args, project, targets, load):
@@ -85,8 +103,7 @@ def _load_isolated(args, project, targets, load):
 def _loadable_targets(args, project, names, load, error):
     """The targets among `names`, which failed together with `error`, that load."""
     if len(names) == 1:
-        args.load_errors += 1
-        print(f"ERROR: could not load {names[0]}: {error}", file=sys.stderr)
+        _report_broken(args, "load", names[0], error)
         return []
     loadable = []
     middle = len(names) // 2
@@ -135,8 +152,7 @@ def _element_targets(args, project, names):
                     loader = adapter.junction_loader(project, junction)
                 except Exception as exc:
                     adapter.reset_loader_caches(project)
-                    args.load_errors += 1
-                    print(f"ERROR: could not load subproject {junction}: {exc}", file=sys.stderr)
+                    _report_broken(args, "subproject", junction, exc)
                     continue
                 if id(loader) in seen_loaders:
                     continue
@@ -166,8 +182,7 @@ def _load_roots(args, project, names):
     except Exception as exc:
         adapter.reset_loader_caches(project)
         if len(names) == 1:
-            args.load_errors += 1
-            print(f"ERROR: could not load {names[0]}: {exc}", file=sys.stderr)
+            _report_broken(args, "read", names[0], exc)
             return []
     middle = len(names) // 2
     return _load_roots(args, project, names[:middle]) + _load_roots(args, project, names[middle:])
@@ -366,6 +381,10 @@ class _Progress:
 
 def _report_option_set_failure(args, stats, option_set, exc):
     label = option_space.label(option_set)
+    if args.broken is not None:
+        project = args.current_project
+        options = adapter.effective_options(project) if project is not None else None
+        args.broken.add("option-set", None, exc, options or option_set)
     if adapter.is_user_assertion(exc):
         # The project declares this combination unsupported with (!).
         stats["option_sets_skipped"] += 1
@@ -463,6 +482,15 @@ def _main() -> int:
 
     args.pinned_empty = []
     args.load_errors = 0
+    args.current_project = None
+    args.broken = None
+    if args.report_broken:
+        # Fail before searching rather than lose the report at the end.
+        report_dir = os.path.dirname(os.path.abspath(args.report_broken))
+        if not os.access(report_dir, os.W_OK | os.X_OK):
+            print(f"error: cannot write --report-broken into {report_dir}", file=sys.stderr)
+            return 2
+        args.broken = broken.BrokenReport()
     if args.all_options or args.options_file:
         try:
             status = _prepare_options(args)
@@ -512,6 +540,7 @@ def _main() -> int:
                 loaded_any = False
                 discover_seconds = 0.0
                 for option_set in option_sets:
+                    args.current_project = None
                     try:
                         if option_set is None:
                             with adapter.empty_flags_overrides(
@@ -681,6 +710,11 @@ def _main() -> int:
     finally:
         out.flush()
         sys.stdout.flush()
+        if args.broken is not None:
+            try:
+                args.broken.write(args.report_broken)
+            except OSError as exc:
+                print(f"error: could not write {args.report_broken}: {exc}", file=sys.stderr)
 
         stats["total_seconds"] = time.monotonic() - start_time
         stats["peak_rss_mib"] = metrics.peak_rss_mib()

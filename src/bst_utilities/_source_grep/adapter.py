@@ -517,6 +517,21 @@ def empty_flags_overrides(context, project_name, names):
         context._project_overrides = original
 
 
+def effective_options(project):
+    """
+    Every toplevel option's resolved value in command-line form, sorted by name.
+
+    Options declared in project.conf resolve in BuildStream's first loading
+    pass; options from junction includes only once the project fully loads.
+    """
+    for config in (project.config, project.first_pass_config):
+        pool = getattr(config, "options", None)
+        options = getattr(pool, "_options", None)
+        if options:
+            return {name: _option_cli_value(options[name]) for name in sorted(options)}
+    return {}
+
+
 def project_option_names(project):
     """Names of every option the loaded project declares, including included ones."""
     try:

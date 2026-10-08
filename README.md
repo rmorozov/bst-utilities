@@ -44,6 +44,8 @@ bst-source-grep default_elements.bst 'pthread_create' --all-options --json
 
 `-a`/`--all-elements` searches every element in the project instead of one target;
 `-r`/`--include-subprojects` adds every element of every junctioned subproject.
+`--report-broken FILE` writes every recipe, subproject, fetch or option set that
+failed as JSON Lines, with its error and effective options.
 `--all-options` searches the union of sources reached under every combination of
 the toplevel project's options, attributing each JSON record to its option sets.
 `--options-template` writes a file listing every option and its values; uncomment
