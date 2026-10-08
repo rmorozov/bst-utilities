@@ -44,6 +44,14 @@ missing dependency, with or without `--include-subprojects`.
 Subproject elements are loaded with the subproject's own option values as the
 junction sets them; `--all-options` varies only the toplevel project's options.
 
+Listing the targets reads recipe files with BuildStream's loader only (one pass
+per subproject); elements and their sources are instantiated once, by the load
+that is searched, and `--fetch-sources` fetches from that same load. Recipes can
+fail at either step: while being read (YAML, a missing dependency) or when their
+element is instantiated (an unknown plugin kind, invalid configuration). Either
+way the failing batch is split in halves until the broken recipes are found and
+reported, so a few bad recipes cost a few extra passes, not one per recipe.
+
 | Option | Behavior |
 | --- | --- |
 | `-a / --all-elements` | Search every element in the project's element path instead of TARGET (see above). |

@@ -437,6 +437,8 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
             "good.bst": local,
             # A broken orphan: its dependency does not exist.
             "bad.bst": f"{local}depends:\n- missing.bst\n",
+            # Reads as a recipe; fails only when its plugin is instantiated.
+            "plugin.bst": "kind: does-not-exist\n",
         },
     )
     project(
@@ -510,20 +512,24 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         "lib.bst:lib.txt",
         "sub.bst:lib.bst:lib.txt",
     ]
-    deep = search("--all-elements", "--include-subprojects", "--find", "*.txt", "--fetch-sources")
-    # unused.bst has no ref, so its subproject cannot load: reported, the rest searched.
-    assert deep.returncode == 2, deep.stderr
-    assert "ERROR: could not load subproject unused.bst" in deep.stderr, deep.stderr
-    # The broken orphan is reported; its healthy sibling is still searched.
-    assert "ERROR: could not load other.bst:bad.bst" in deep.stderr, deep.stderr
-    assert sorted(deep.stdout.splitlines()) == [
-        "extra/orphan.bst:orphan.txt",
-        "lib.bst:lib.txt",
-        "other.bst:good.bst:good.txt",
-        "sub.bst:inner.bst:leaf.bst:leaf.txt",
-        "sub.bst:lib.bst:lib.txt",
-        "sub.bst:spare.bst:spare.txt",
-    ], deep.stderr
+    # The second, offline run reuses the sources the first one fetched.
+    for fetch in (["--fetch-sources"], []):
+        deep = search("-ar", "--find", "*.txt", *fetch)
+        # unused.bst has no ref, so its subproject cannot load: reported, the rest searched.
+        assert deep.returncode == 2, deep.stderr
+        assert "ERROR: could not load subproject unused.bst" in deep.stderr, deep.stderr
+        # Broken orphans are reported, whether they fail while their recipes are
+        # read or when their plugin is instantiated; healthy siblings are searched.
+        assert "ERROR: could not load other.bst:bad.bst" in deep.stderr, deep.stderr
+        assert "ERROR: could not load other.bst:plugin.bst" in deep.stderr, deep.stderr
+        assert sorted(deep.stdout.splitlines()) == [
+            "extra/orphan.bst:orphan.txt",
+            "lib.bst:lib.txt",
+            "other.bst:good.bst:good.txt",
+            "sub.bst:inner.bst:leaf.bst:leaf.txt",
+            "sub.bst:lib.bst:lib.txt",
+            "sub.bst:spare.bst:spare.txt",
+        ], deep.stderr
     nested = search("sub.bst:inner.bst:leaf.bst", "--find", "*")
     assert nested.stdout.splitlines() == ["sub.bst:inner.bst:leaf.bst:leaf.txt"]
     if os.path.exists("/dev/fuse"):
