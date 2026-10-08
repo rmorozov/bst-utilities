@@ -418,12 +418,55 @@ def _with_load_errors(exit_code, stats, args):
     return exit_code
 
 
+def _report_destination_problem(path):
+    """Why --report-broken cannot be published at path, or None."""
+    if os.path.lexists(path) and not os.path.isfile(path):
+        return f"--report-broken {path} exists and is not a regular file"
+    directory = os.path.dirname(os.path.abspath(path))
+    if not os.path.isdir(directory):
+        return f"--report-broken directory {directory} does not exist"
+    if not os.access(directory, os.W_OK | os.X_OK):
+        return f"cannot write --report-broken into {directory}"
+    return None
+
+
+def _publish_report(args) -> bool:
+    """Write the --report-broken file; False when it was requested but not written."""
+    if args.broken is None:
+        return True
+    try:
+        args.broken.write(args.report_broken)
+    except OSError as exc:
+        print(f"error: could not write {args.report_broken}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def _main() -> int:
     args = cli.parse_args()
 
     if args.list_options or args.options_template:
         return _describe_options(args)
 
+    args.broken = None
+    if args.report_broken:
+        # Fail before searching rather than lose the report at the end.
+        problem = _report_destination_problem(args.report_broken)
+        if problem is not None:
+            print(f"error: {problem}", file=sys.stderr)
+            return 2
+        args.broken = broken.BrokenReport()
+
+    # Publish the report on every exit path, including a closed stdout and an
+    # interrupt, independently of flushing search output.
+    try:
+        status = _search(args)
+    finally:
+        published = _publish_report(args)
+    return status if published else 2
+
+
+def _search(args) -> int:
     for stream_name in (sys.stdout, sys.stderr):
         if hasattr(stream_name, "reconfigure"):
             try:
@@ -483,14 +526,6 @@ def _main() -> int:
     args.pinned_empty = []
     args.load_errors = 0
     args.current_project = None
-    args.broken = None
-    if args.report_broken:
-        # Fail before searching rather than lose the report at the end.
-        report_dir = os.path.dirname(os.path.abspath(args.report_broken))
-        if not os.access(report_dir, os.W_OK | os.X_OK):
-            print(f"error: cannot write --report-broken into {report_dir}", file=sys.stderr)
-            return 2
-        args.broken = broken.BrokenReport()
     if args.all_options or args.options_file:
         try:
             status = _prepare_options(args)
@@ -710,11 +745,6 @@ def _main() -> int:
     finally:
         out.flush()
         sys.stdout.flush()
-        if args.broken is not None:
-            try:
-                args.broken.write(args.report_broken)
-            except OSError as exc:
-                print(f"error: could not write {args.report_broken}: {exc}", file=sys.stderr)
 
         stats["total_seconds"] = time.monotonic() - start_time
         stats["peak_rss_mib"] = metrics.peak_rss_mib()

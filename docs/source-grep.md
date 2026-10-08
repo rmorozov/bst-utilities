@@ -106,8 +106,12 @@ a file.
 | 141 | Output pipe closed by a reader (e.g. `head`); quiet exit after cleanup |
 
 `--report-broken FILE` writes what failed during the run to FILE (replaced
-atomically when the run ends, whatever its exit status), one JSON object per
-line, next to the usual stderr diagnostics. Records are grouped by failure; each
+atomically when the run ends, whatever its exit status, including an interrupt
+or a reader closing stdout early), one JSON object per line, next to the usual
+stderr diagnostics. A destination that is a directory or another non-regular
+file, or whose directory is missing or not writable, fails with status 2 before
+searching; if the report still cannot be written at the end, the previous file is
+left untouched and the run exits 2 instead of 0 or 1. Records are grouped by failure; each
 lists the effective toplevel option values of every option set it occurred in:
 
 ```json

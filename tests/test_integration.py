@@ -974,3 +974,26 @@ def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_pat
         if options:
             assert records[("read", "only-a.bst")]["reason"] == "user-assertion"
             assert records[("read", "only-a.bst")]["option_sets"] == [{"flavour": "b"}]
+
+    # A reader that closes stdout early still gets the report, and the quiet 141.
+    report.unlink()
+    base = [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+    base += ["-C", str(project), "-a", "--find", "*.txt", "--report-broken", str(report)]
+    proc = subprocess.Popen(base, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc.stdout.close()
+    stderr = proc.stderr.read().decode()
+    assert proc.wait(timeout=120) == 141, stderr
+    assert "Traceback" not in stderr
+    records = [json.loads(line) for line in report.read_text().splitlines()]
+    assert ("load", "plugin.bst") in {(r["stage"], r["element"]) for r in records}
+
+    # A destination that cannot be replaced by a file fails before searching.
+    destination = tmp_path / "report-dir"
+    destination.mkdir()
+    result = subprocess.run(
+        base[:-1] + [str(destination)], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 2
+    assert "is not a regular file" in result.stderr
+    assert not result.stdout
+    assert list(destination.iterdir()) == []
