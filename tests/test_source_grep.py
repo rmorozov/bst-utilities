@@ -71,7 +71,7 @@ def test_selection_does_not_retry_internal_typeerror():
 
     stream = BrokenStream()
     with pytest.raises(TypeError, match="internal failure"):
-        adapter.call_load_selection(stream, "test.bst", "all")
+        adapter.call_load_selection(stream, ("test.bst",), "all")
     assert stream.calls == 1
 
 

@@ -19,10 +19,35 @@ no FUSE mount, not no daemon.
 ```sh
 bst-source-grep TARGET PATTERN [options]
 bst-source-grep TARGET --find GLOB [options]
+bst-source-grep --all-elements PATTERN [options]
+bst-source-grep -ar PATTERN [options]        # also every subproject element
 ```
+
+`--all-elements` replaces TARGET with every element file under the toplevel
+project's element path (`.bst` staging directories skipped), the list BuildStream
+uses when a project sets no default targets; `defaults: targets` is not consulted.
+`--deps` still applies to each of them, so the default `all` also searches the
+subproject elements they depend on, and `none` searches only the project's own
+recipes. A link element stands for its target. Junction elements, and links to
+them, are left out, and are dropped before `--fetch-sources` fetches anything: their sources are a
+whole subproject, whose used elements are reached as dependencies. It combines with `--all-options`, `--fetch-sources` and the other
+options.
+
+`--include-subprojects` (only with `--all-elements`) also adds every element file of
+each junctioned subproject, at any depth, named `junction.bst:element.bst`, so
+recipes no one depends on inside a subproject are searched too. Every junction
+in the element path is loaded for this, including unused ones; fetching a missing
+one needs `--fetch-subprojects` (or `--fetch-sources`). A subproject that cannot
+load is reported on stderr, the rest is still searched, and the exit status is 2.
+The same holds for any listed recipe that fails to load, for example one with a
+missing dependency, with or without `--include-subprojects`.
+Subproject elements are loaded with the subproject's own option values as the
+junction sets them; `--all-options` varies only the toplevel project's options.
 
 | Option | Behavior |
 | --- | --- |
+| `-a / --all-elements` | Search every element in the project's element path instead of TARGET (see above). |
+| `-r / --include-subprojects` | With `--all-elements`, also search every element of every junctioned subproject (see above). |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |

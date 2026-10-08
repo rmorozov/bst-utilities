@@ -635,3 +635,29 @@ def test_progress_estimates_remaining_option_sets():
     single = application._Progress(1, clock=lambda: 0.0, stream=quiet)
     single.step()
     assert quiet.getvalue() == ""
+
+
+def test_all_elements_takes_the_only_positional_as_pattern():
+    args = cli.parse_args(["--all-elements", "needle"])
+    assert args.target is None and args.pattern == "needle"
+    args = cli.parse_args(["--all-elements", "--find", "*.c"])
+    assert args.target is None and args.pattern is None
+    args = cli.parse_args(["--all-elements", "--include-subprojects", "needle"])
+    assert args.include_subprojects and args.pattern == "needle"
+    args = cli.parse_args(["-ar", "needle"])
+    assert args.all_elements and args.include_subprojects and args.pattern == "needle"
+    for argv in (
+        ["--all-elements", "app.bst", "needle"],
+        ["--find", "*.c"],
+        ["--include-subprojects", "app.bst", "needle"],
+    ):
+        with pytest.raises(SystemExit):
+            cli.parse_args(argv)
+
+
+def test_project_element_names_walk_the_element_path(tmp_path):
+    for rel in ("b.bst", "a/x.bst", "a/notes.txt", ".bst/staged/j.bst", "a/.bst/y.bst"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("")
+    project = SimpleNamespace(element_path=str(tmp_path))
+    assert adapter.project_element_names(project) == ["b.bst", "a/x.bst"]

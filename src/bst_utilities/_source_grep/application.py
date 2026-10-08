@@ -41,9 +41,97 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     stream.init()
     project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
     stream.set_project(project)
+    targets = _targets(args, project)
+    if args.all_elements:
+        targets = _element_targets(args, stream, project, targets)
     if args.fetch_sources:
-        adapter.fetch_sources(stream, args.target, selection)
-    return stream, project, adapter.call_load_selection(stream, args.target, selection)
+        adapter.fetch_sources(stream, targets, selection)
+    return stream, project, adapter.call_load_selection(stream, targets, selection)
+
+
+def _element_targets(args, stream, project, names):
+    """
+    --all-elements targets without junction elements, plus with
+    --include-subprojects every element of each junctioned subproject.
+
+    A junction's sources are a whole subproject, not a recipe's sources; the
+    subproject elements that are used are reached as dependencies. Junction
+    targets, including links to junctions, are dropped before fetching, so an
+    unused one is never fetched. A recipe or subproject that cannot load is
+    reported and skipped; the rest is still searched.
+    """
+    targets = []
+    seen_loaders = set()
+    batches = [names]
+    while batches:
+        subprojects = []
+        for batch in batches:
+            roots = _load_roots(args, stream, project, batch)
+            targets += [name for name, element in roots if not adapter.is_junction(element)]
+            if not args.include_subprojects:
+                continue
+            junctions = {adapter.element_label(e) for _, e in roots if adapter.is_junction(e)}
+            for junction in sorted(junctions):
+                try:
+                    loader = adapter.junction_loader(project, junction)
+                except Exception as exc:
+                    adapter.reset_loader_caches(project)
+                    args.load_errors += 1
+                    print(f"ERROR: could not load subproject {junction}: {exc}", file=sys.stderr)
+                    continue
+                if id(loader) in seen_loaders:
+                    continue
+                seen_loaders.add(id(loader))
+                subprojects.append(
+                    [f"{junction}:{name}" for name in adapter.project_element_names(loader.project)]
+                )
+        batches = subprojects
+    if not targets:
+        raise RuntimeError(
+            f"no loadable elements other than junctions under {project.element_path}"
+        )
+    return targets
+
+
+def _load_roots(args, stream, project, names):
+    """
+    (name, element) for each of `names` that loads, without dependencies.
+
+    Links resolve to their targets, so a name whose element comes back under
+    another name is loaded on its own to learn what it stands for. If the batch
+    fails, every name is loaded on its own and the failing ones are reported;
+    each failure's partial loader state is dropped before the next load.
+    """
+    none = adapter.make_selection("none")
+    try:
+        elements = adapter.call_load_selection(stream, names, none)
+    except Exception:
+        adapter.reset_loader_caches(project)
+        by_label = {}
+    else:
+        by_label = {adapter.element_label(e): e for e in elements}
+    roots = []
+    for name in names:
+        element = by_label.get(name)
+        if element is None:
+            try:
+                element = adapter.call_load_selection(stream, [name], none)[0]
+            except Exception as exc:
+                adapter.reset_loader_caches(project)
+                args.load_errors += 1
+                print(f"ERROR: could not load {name}: {exc}", file=sys.stderr)
+                continue
+        roots.append((name, element))
+    return roots
+
+
+def _targets(args, project):
+    if not args.all_elements:
+        return (args.target,)
+    targets = adapter.project_element_names(project)
+    if not targets:
+        raise RuntimeError(f"no elements found under {project.element_path}")
+    return targets
 
 
 def _load_option_set(ctx, Project, Stream, args, selection, streams, option_set):
@@ -253,9 +341,9 @@ def _warn_unplanned_options(args, project):
         )
 
 
-def _with_option_set_errors(exit_code, stats):
-    """An option set that failed to load makes any search incomplete."""
-    if stats["option_set_errors"] > 0:
+def _with_load_errors(exit_code, stats, args):
+    """An option set, recipe or subproject that failed to load makes any search incomplete."""
+    if stats["option_set_errors"] > 0 or args.load_errors > 0:
         return 2
     return exit_code
 
@@ -323,6 +411,7 @@ def _main() -> int:
         return 2
 
     args.pinned_empty = []
+    args.load_errors = 0
     if args.all_options or args.options_file:
         try:
             status = _prepare_options(args)
@@ -454,6 +543,7 @@ def _main() -> int:
                 exit_code = 1
                 if (
                     stats["option_set_errors"] > 0
+                    or args.load_errors > 0
                     or stats["uncached_elements"] > 0
                     or stats["unresolved_elements"] > 0
                     or (use_fuse and stats["no_digest_elements"] > 0)
@@ -477,7 +567,7 @@ def _main() -> int:
 
                 if not use_fuse:
                     exit_code = search_cas.search_cas(trees, args, stats, cas_dir, emitter)
-                    return _with_option_set_errors(exit_code, stats)
+                    return _with_load_errors(exit_code, stats, args)
 
                 # ------------------------------------------------------------
                 # FUSE mount phase
@@ -493,7 +583,7 @@ def _main() -> int:
                 )
 
                 exit_code = search_fuse.search_fuse(trees, args, stats, mount_manager, emitter)
-                exit_code = _with_option_set_errors(exit_code, stats)
+                exit_code = _with_load_errors(exit_code, stats, args)
 
             except (KeyboardInterrupt, BrokenPipeError):
                 raise

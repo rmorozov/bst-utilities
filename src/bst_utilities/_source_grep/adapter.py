@@ -245,10 +245,51 @@ def create_project(Project, context, args, fetch_subprojects=None, cli_options=N
     )
 
 
-def call_load_selection(stream, target: str, selection):
+def project_element_names(project):
+    """
+    Every element file under the project's element path, as BuildStream lists
+    them when a project has no default targets (`.bst` staging dirs skipped).
+    """
+    names = []
+    for root, dirs, files in os.walk(project.element_path):
+        dirs[:] = sorted(d for d in dirs if d != ".bst")
+        rel_dir = os.path.relpath(root, project.element_path)
+        for name in sorted(files):
+            if name.endswith(".bst"):
+                names.append(os.path.normpath(os.path.join(rel_dir, name)))
+    return names
+
+
+def junction_loader(project, junction: str):
+    """The loaded subproject behind `junction` (e.g. "a.bst:b.bst") of `project`."""
+    return project.loader.get_loader(junction, None)
+
+
+def reset_loader_caches(project) -> None:
+    """
+    Drop what a failed load left in the project's loaders.
+
+    A successful load clears the loaders' element caches. A failed one keeps
+    elements marked fully loaded whose dependencies never loaded, and junction
+    searches still marked in progress; a later load would trust both.
+    """
+    pending = [project.loader]
+    while pending:
+        loader = pending.pop()
+        loader._elements = {}
+        loader._meta_elements = {}
+        loader._loader_search_provenances = {}
+        pending += [child for child in loader._loaders.values() if child is not None]
+
+
+def is_junction(element) -> bool:
+    return element.get_kind() == "junction"
+
+
+def call_load_selection(stream, targets, selection):
     return list(
         stream.load_selection(
-            (target,),
+            tuple(targets),
             selection=selection,
             connect_artifact_cache=False,
             connect_source_cache=False,
@@ -257,9 +298,9 @@ def call_load_selection(stream, target: str, selection):
     )
 
 
-def fetch_sources(stream, target: str, selection) -> None:
+def fetch_sources(stream, targets, selection) -> None:
     """Fetch the selection's sources into the local source cache (explicitly requested)."""
-    stream.fetch((target,), selection=selection)
+    stream.fetch(tuple(targets), selection=selection)
 
 
 def release_load_state() -> None:
