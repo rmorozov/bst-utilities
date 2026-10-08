@@ -160,6 +160,11 @@ combination before loading it, as `bst -o … source fetch --deps …` would, an
 implies `--fetch-subprojects`. It uses the network and is never implied. Sources
 are never tracked: refs can differ between combinations, so tracking each one would
 rewrite the same project files in turn.
+A source that cannot be fetched (a stale URL, a missing ref target) does not stop
+the search: every other fetch still runs, each failure is reported as
+`ERROR: could not fetch sources of NAME: …`, that element is reported as not
+cached, the rest is searched, and the exit status is 2. This matters most with
+`--all-elements`, which fetches recipes no target depends on.
 
 ### Narrowing long option lists
 

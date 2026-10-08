@@ -893,3 +893,63 @@ options:
         for line in result.stdout.splitlines()
     }
     assert reached == {"plain.txt": [{"mode": ""}], "x.txt": [{"mode": "x"}]}
+
+
+def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    (tmp_path / "payload" / "top").mkdir(parents=True)
+    (tmp_path / "payload" / "top" / "tarred.txt").write_text("needle\n")
+    archive = tmp_path / "payload.tar"
+    shutil.make_archive(str(archive.with_suffix("")), "tar", tmp_path / "payload")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    project = tmp_path / "project"
+    (project / "elements").mkdir(parents=True)
+    (project / "src").mkdir()
+    (project / "src" / "local.txt").write_text("needle\n")
+    (project / "project.conf").write_text(
+        "name: fetchfail\nmin-version: 2.0\nelement-path: elements\n"
+        "options:\n  flavour:\n    type: enum\n    description: f\n    values: [a, b]\n"
+        "    default: a\n"
+    )
+
+    def tar(url):
+        return f"kind: import\nsources:\n- kind: tar\n  url: {url}\n  ref: {digest}\n"
+
+    elements = {
+        "local.bst": "kind: import\nsources:\n- kind: local\n  path: src\n",
+        "tarred.bst": tar(f"file://{archive}"),
+        # A stale orphan: its source is gone, so fetching it fails.
+        "stale.bst": tar(f"file://{tmp_path / 'gone.tar'}"),
+    }
+    for name, text in elements.items():
+        (project / "elements" / name).write_text(text)
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    for options in ([], ["--all-options"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+            + ["-C", str(project), "-a", "--find", "*.txt", "--fetch-sources", *options],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 2, result.stderr
+        assert "ERROR: could not fetch sources of stale.bst: tar source" in result.stderr
+        assert "source tree is not cached: stale.bst" in result.stderr
+        # The fetched remote source and the local one are still searched.
+        assert sorted(set(result.stdout.splitlines())) == [
+            "local.bst:local.txt",
+            "tarred.bst:top/tarred.txt",
+        ], result.stderr

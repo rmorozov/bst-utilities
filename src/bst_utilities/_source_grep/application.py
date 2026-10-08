@@ -56,7 +56,10 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     else:
         elements = load(targets)
     if args.fetch_sources:
-        adapter.fetch_loaded(stream, elements)
+        # Elements whose sources failed to fetch are searched as uncached.
+        for name, reason in adapter.fetch_loaded(stream, elements).items():
+            args.load_errors += 1
+            print(f"ERROR: could not fetch sources of {name}: {reason}", file=sys.stderr)
     return stream, project, elements
 
 
@@ -372,7 +375,10 @@ def _report_option_set_failure(args, stats, option_set, exc):
     stats["option_set_errors"] += 1
     if args.traceback:
         traceback.print_exc()
-    print(f"ERROR: could not load option set [{label}]: {exc}", file=sys.stderr)
+    print(
+        f"ERROR: could not load option set [{label}]: {str(exc) or type(exc).__name__}",
+        file=sys.stderr,
+    )
 
 
 def _warn_unplanned_options(args, project):
