@@ -893,3 +893,107 @@ options:
         for line in result.stdout.splitlines()
     }
     assert reached == {"plain.txt": [{"mode": ""}], "x.txt": [{"mode": "x"}]}
+
+
+def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_path):
+    pytest.importorskip("buildstream")
+    if shutil.which("bst") is None:
+        pytest.skip("BuildStream CLI is not installed")
+    try:
+        with socket.socket(socket.AF_UNIX):
+            pass
+    except PermissionError:
+        pytest.skip("environment disallows Unix sockets required by BuildStream casd")
+
+    (tmp_path / "payload" / "top").mkdir(parents=True)
+    (tmp_path / "payload" / "top" / "tarred.txt").write_text("needle\n")
+    archive = tmp_path / "payload.tar"
+    shutil.make_archive(str(archive.with_suffix("")), "tar", tmp_path / "payload")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    project = tmp_path / "project"
+    (project / "elements").mkdir(parents=True)
+    (project / "src").mkdir()
+    (project / "src" / "local.txt").write_text("needle\n")
+    (project / "project.conf").write_text(
+        "name: fetchfail\nmin-version: 2.0\nelement-path: elements\n"
+        "options:\n  flavour:\n    type: enum\n    description: f\n    values: [a, b]\n"
+        "    default: a\n"
+    )
+
+    def tar(url):
+        return f"kind: import\nsources:\n- kind: tar\n  url: {url}\n  ref: {digest}\n"
+
+    elements = {
+        "local.bst": "kind: import\nsources:\n- kind: local\n  path: src\n",
+        "tarred.bst": tar(f"file://{archive}"),
+        # A stale orphan: its source is gone, so fetching it fails.
+        "stale.bst": tar(f"file://{tmp_path / 'gone.tar'}"),
+        # Fails when instantiated, under every option set.
+        "plugin.bst": "kind: does-not-exist\n",
+        # The project declares this one unsupported for flavour b.
+        "only-a.bst": 'kind: stack\n(?):\n- flavour == "b":\n    (!): only for flavour a\n',
+    }
+    for name, text in elements.items():
+        (project / "elements" / name).write_text(text)
+    config = tmp_path / "buildstream.conf"
+    config.write_text(f"cachedir: {tmp_path / 'cache'}\n")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    report = tmp_path / "broken.jsonl"
+    for options in ([], ["--all-options"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+            + ["-C", str(project), "-a", "--find", "*.txt", "--fetch-sources", *options]
+            + ["--report-broken", str(report)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 2, result.stderr
+        assert "ERROR: could not fetch sources of stale.bst: tar source" in result.stderr
+        assert "source tree is not cached: stale.bst" in result.stderr
+        # The fetched remote source and the local one are still searched.
+        assert sorted(set(result.stdout.splitlines())) == [
+            "local.bst:local.txt",
+            "tarred.bst:top/tarred.txt",
+        ], result.stderr
+        records = {
+            (record["stage"], record["element"]): record
+            for record in map(json.loads, report.read_text().splitlines())
+        }
+        both = [{"flavour": "a"}, {"flavour": "b"}] if options else [{"flavour": "a"}]
+        assert sorted(records) == sorted(
+            [("fetch", "stale.bst"), ("load", "plugin.bst")]
+            + ([("read", "only-a.bst")] if options else [])
+        ), records
+        assert records[("load", "plugin.bst")]["reason"] == "plugin-not-found"
+        assert records[("load", "plugin.bst")]["option_sets"] == both
+        assert "gone.tar" in records[("fetch", "stale.bst")]["error"]
+        if options:
+            assert records[("read", "only-a.bst")]["reason"] == "user-assertion"
+            assert records[("read", "only-a.bst")]["option_sets"] == [{"flavour": "b"}]
+
+    # A reader that closes stdout early still gets the report, and the quiet 141.
+    report.unlink()
+    base = [sys.executable, "-m", "bst_utilities.source_grep", "--config", str(config)]
+    base += ["-C", str(project), "-a", "--find", "*.txt", "--report-broken", str(report)]
+    proc = subprocess.Popen(base, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc.stdout.close()
+    stderr = proc.stderr.read().decode()
+    assert proc.wait(timeout=120) == 141, stderr
+    assert "Traceback" not in stderr
+    records = [json.loads(line) for line in report.read_text().splitlines()]
+    assert ("load", "plugin.bst") in {(r["stage"], r["element"]) for r in records}
+
+    # A destination that cannot be replaced by a file fails before searching.
+    destination = tmp_path / "report-dir"
+    destination.mkdir()
+    result = subprocess.run(
+        base[:-1] + [str(destination)], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 2
+    assert "is not a regular file" in result.stderr
+    assert not result.stdout
+    assert list(destination.iterdir()) == []

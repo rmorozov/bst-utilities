@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-034",
+    "tool": "bst-source-grep",
+    "title": "Report broken elements as JSON",
+    "area": "usability",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "With --all-elements, --all-options and --fetch-sources a large project reports many broken recipes (assertions, missing files or elements, invalid YAML, undefined variables, missing paths, failed fetches) only as stderr lines, repeated per option set and hard to triage.",
+    "proposal": "Add --report-broken FILE: a JSON Lines report, written atomically at the end of the run, with one record per failure (stage, element, error, BuildStream reason) and the effective toplevel option values of every option set it occurred in.",
+    "acceptance": [
+      "Read, instantiation, subproject, fetch and option-set failures are recorded with stage, element, error text, BuildStream reason and the effective option sets; the same failure across option sets is one record.",
+      "The report is written atomically whatever the exit status, including 141 when a reader closes stdout early; a directory, non-regular or unwritable destination fails before searching; a failed write keeps the previous file and exits 2; stdout results and stderr diagnostics are unchanged."
+    ],
+    "depends_on": [
+      "BSG-033"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (PR #14).",
+      "test_broken_report_groups_failures_with_their_option_sets, the test_report_broken_* unit tests and the --report-broken runs (including a closed reader and a directory destination) in test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched pass against BuildStream 2.8.1."
+    ]
+  }
+}

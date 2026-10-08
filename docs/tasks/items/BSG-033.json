@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-033",
+    "tool": "bst-source-grep",
+    "title": "Keep searching when some --fetch-sources fetches fail",
+    "area": "robustness",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "One source that could not be fetched made --fetch-sources raise an empty StreamError for the whole load. With --all-elements, which also fetches orphan recipes with stale URLs, every option set failed with an empty message and no result was printed, while a TARGET search found results.",
+    "proposal": "Run the fetch as before, but when BuildStream's scheduler reports failed fetch jobs, report each failed element with BuildStream's final failure message, search the rest (failed elements are uncached) and exit with status 2; interruption still aborts. Name the exception type when a load error has no message.",
+    "acceptance": [
+      "With an unfetchable source among the selection, --fetch-sources reports 'could not fetch sources of NAME: reason', still emits matches from the other elements (local and fetched remote sources), and exits with status 2, with and without --all-options.",
+      "A terminated fetch still aborts; option-set errors never print an empty reason."
+    ],
+    "depends_on": [
+      "BSG-032"
+    ],
+    "evidence": [
+      "Branch claude/source-grep-all-options-eheilh (after PR #13).",
+      "test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched passes against BuildStream 2.8.1; before the change it failed with ERROR: StreamError('') and no output."
+    ]
+  }
+}

@@ -316,16 +316,50 @@ def load_for_fetch(stream, targets, selection):
     )
 
 
-def fetch_loaded(stream, elements) -> None:
+def fetch_loaded(stream, elements):
     """
     Fetch the sources of loaded `elements` into the local source cache
     (explicitly requested), as Stream.fetch() does after its own load.
 
     Fetching the elements that are then searched avoids instantiating every
-    element and source a second time.
+    element and source a second time. Without BuildStream's frontend the
+    scheduler runs every fetch job and fails only at the end, so one source
+    that cannot be fetched must not discard the rest: returns {element full
+    name: reason} for the elements whose fetch failed. Interruption raises.
     """
-    stream.query_cache(elements, only_sources=True)
-    stream._fetch(elements, announce_session=True)
+    from buildstream._exceptions import StreamError
+    from buildstream._message import MessageType
+
+    reasons = {}
+    messenger = stream._context.messenger
+    previous = messenger._message_handler
+
+    def record(message, is_silenced=False):
+        name = message.task_element_name or message.element_name
+        # A job's final FAIL carries the error; earlier ones report retries.
+        if name and message.message_type == MessageType.FAIL:
+            reasons[name] = message.message
+        elif name and message.message_type in (MessageType.ERROR, MessageType.BUG):
+            reasons.setdefault(name, message.message)
+        if previous is not None:
+            previous(message, is_silenced=is_silenced)
+
+    messenger.set_message_handler(record)
+    try:
+        stream.query_cache(elements, only_sources=True)
+        stream._fetch(elements, announce_session=True)
+    except StreamError as exc:
+        if getattr(exc, "terminated", False):
+            raise
+        failed = set()
+        for queue in stream.queues:
+            failed.update(queue._task_group.failed_tasks)
+        if not failed:
+            raise
+        return {name: reasons.get(name, "fetch failed") for name in sorted(failed)}
+    finally:
+        messenger.set_message_handler(previous)
+    return {}
 
 
 def release_load_state() -> None:
@@ -481,6 +515,21 @@ def empty_flags_overrides(context, project_name, names):
         yield
     finally:
         context._project_overrides = original
+
+
+def effective_options(project):
+    """
+    Every toplevel option's resolved value in command-line form, sorted by name.
+
+    Options declared in project.conf resolve in BuildStream's first loading
+    pass; options from junction includes only once the project fully loads.
+    """
+    for config in (project.config, project.first_pass_config):
+        pool = getattr(config, "options", None)
+        options = getattr(pool, "_options", None)
+        if options:
+            return {name: _option_cli_value(options[name]) for name in sorted(options)}
+    return {}
 
 
 def project_option_names(project):

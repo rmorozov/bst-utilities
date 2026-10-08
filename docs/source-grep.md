@@ -56,6 +56,7 @@ reported, so a few bad recipes cost a few extra passes, not one per recipe.
 | --- | --- |
 | `-a / --all-elements` | Search every element in the project's element path instead of TARGET (see above). |
 | `-r / --include-subprojects` | With `--all-elements`, also search every element of every junctioned subproject (see above). |
+| `--report-broken FILE` | Also write every failed element, subproject, fetch or option set as JSON Lines to FILE (see below). |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |
@@ -103,6 +104,34 @@ a file.
 | 2 | Error or incomplete search, even if some matches were emitted |
 | 130 | Interrupted |
 | 141 | Output pipe closed by a reader (e.g. `head`); quiet exit after cleanup |
+
+`--report-broken FILE` writes what failed during the run to FILE (replaced
+atomically when the run ends, whatever its exit status, including an interrupt
+or a reader closing stdout early), one JSON object per line, next to the usual
+stderr diagnostics. A destination that is a directory or another non-regular
+file, or whose directory is missing or not writable, fails with status 2 before
+searching; if the report still cannot be written at the end, the previous file is
+left untouched and the run exits 2 instead of 0 or 1. Records are grouped by failure; each
+lists the effective toplevel option values of every option set it occurred in:
+
+```json
+{"stage": "read", "element": "foo.bst", "error": "foo.bst [line 4 column 9]: only supported for arm64", "reason": "user-assertion", "option_sets": [{"arch": "x86_64"}, {"arch": "riscv64"}]}
+```
+
+| `stage` | Failure |
+| --- | --- |
+| `read` | The recipe could not be read: YAML, a missing file or dependency, a `(!)` assertion |
+| `load` | The element could not be instantiated: unknown plugin kind, configuration, undefined variable |
+| `subproject` | A junction's subproject could not be loaded (`--include-subprojects`) |
+| `fetch` | Its sources could not be fetched (`--fetch-sources`) |
+| `option-set` | The whole option set failed to load or was declared unsupported; `element` is null |
+
+`reason` is BuildStream's error reason in lower case (e.g. `missing-file`,
+`user-assertion`, `unresolved-variable`, `plugin-not-found`) or null. `read`,
+`load` and `subproject` records come from `--all-elements` searches, where a
+failing recipe is skipped instead of failing the run; with TARGET such an error
+still fails the whole run. Elements that load but whose sources are not cached
+or have no ref are reported on stderr only.
 
 ## Searching every option set
 
@@ -160,6 +189,11 @@ combination before loading it, as `bst -o … source fetch --deps …` would, an
 implies `--fetch-subprojects`. It uses the network and is never implied. Sources
 are never tracked: refs can differ between combinations, so tracking each one would
 rewrite the same project files in turn.
+A source that cannot be fetched (a stale URL, a missing ref target) does not stop
+the search: every other fetch still runs, each failure is reported as
+`ERROR: could not fetch sources of NAME: …`, that element is reported as not
+cached, the rest is searched, and the exit status is 2. This matters most with
+`--all-elements`, which fetches recipes no target depends on.
 
 ### Narrowing long option lists
 

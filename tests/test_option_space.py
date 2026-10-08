@@ -681,7 +681,7 @@ def test_element_targets_read_recipes_without_instantiating_elements(monkeypatch
     monkeypatch.setattr(adapter, "load_recipes", load_recipes)
     monkeypatch.setattr(adapter, "reset_loader_caches", lambda project: None)
     monkeypatch.setattr(adapter, "call_load_selection", instantiate)
-    args = SimpleNamespace(include_subprojects=False, load_errors=0)
+    args = SimpleNamespace(include_subprojects=False, load_errors=0, broken=None)
     project = SimpleNamespace(element_path="elements")
     names = ["a.bst", "bad.bst", "j.bst", "link.bst", "z.bst"]
 
@@ -705,7 +705,7 @@ def test_load_isolated_bisects_to_targets_that_fail_to_instantiate(monkeypatch, 
 
     monkeypatch.setattr(adapter, "reset_loader_caches", lambda project: None)
     monkeypatch.setattr(adapter, "release_load_state", lambda: None)
-    args = SimpleNamespace(load_errors=0)
+    args = SimpleNamespace(load_errors=0, broken=None)
     names = [f"e{i}.bst" for i in range(7)] + ["bad.bst"]
 
     elements = application._load_isolated(args, SimpleNamespace(), names, load)
@@ -714,3 +714,101 @@ def test_load_isolated_bisects_to_targets_that_fail_to_instantiate(monkeypatch, 
     assert loads[-1] == names[:-1] and len(loads) == 8
     assert args.load_errors == 1
     assert "ERROR: could not load bad.bst: No element plugin registered" in capsys.readouterr().err
+
+
+def test_broken_report_groups_failures_with_their_option_sets(tmp_path):
+    from bst_utilities._source_grep import broken
+
+    class Reason:
+        name = "USER_ASSERTION"
+
+    class AssertionFailed(Exception):
+        reason = Reason()
+
+    report = broken.BrokenReport()
+    report.add("read", "a.bst", AssertionFailed("only arm64"), {"arch": "x86_64"})
+    report.add("read", "a.bst", AssertionFailed("only arm64"), {"arch": "riscv64"})
+    report.add("read", "a.bst", AssertionFailed("only arm64"), {"arch": "riscv64"})
+    report.add("fetch", "b.bst", "Error mirroring", {"arch": "x86_64"})
+    report.add("option-set", None, RuntimeError(), {"arch": "arm64"})
+    path = tmp_path / "broken.jsonl"
+    report.write(str(path))
+
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert records == [
+        {
+            "stage": "read",
+            "element": "a.bst",
+            "error": "only arm64",
+            "reason": "user-assertion",
+            "option_sets": [{"arch": "x86_64"}, {"arch": "riscv64"}],
+        },
+        {
+            "stage": "fetch",
+            "element": "b.bst",
+            "error": "Error mirroring",
+            "reason": None,
+            "option_sets": [{"arch": "x86_64"}],
+        },
+        {
+            "stage": "option-set",
+            "element": None,
+            "error": "RuntimeError",
+            "reason": None,
+            "option_sets": [{"arch": "arm64"}],
+        },
+    ]
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".broken-")]
+
+
+def _report_args(path):
+    return SimpleNamespace(list_options=False, options_template=None, report_broken=str(path))
+
+
+def test_report_broken_failure_to_publish_is_an_error(tmp_path, monkeypatch):
+    from bst_utilities._source_grep import application, broken
+
+    report = tmp_path / "broken.jsonl"
+    report.write_text("previous\n")
+    monkeypatch.setattr(cli, "parse_args", lambda: _report_args(report))
+
+    def search(args):
+        args.broken.add("load", "x.bst", "boom", {})
+        return 0
+
+    def replace(source, destination):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(application, "_search", search)
+    monkeypatch.setattr(broken.os, "replace", replace)
+    assert application._main() == 2
+    assert report.read_text() == "previous\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["broken.jsonl"]
+
+
+def test_report_broken_rejects_a_directory_before_searching(tmp_path, monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    monkeypatch.setattr(cli, "parse_args", lambda: _report_args(tmp_path))
+    monkeypatch.setattr(application, "_search", lambda args: pytest.fail("searched"))
+    assert application._main() == 2
+    assert "is not a regular file" in capsys.readouterr().err
+    missing = tmp_path / "missing" / "broken.jsonl"
+    monkeypatch.setattr(cli, "parse_args", lambda: _report_args(missing))
+    assert application._main() == 2
+
+
+def test_report_broken_is_published_when_stdout_closes(tmp_path, monkeypatch):
+    from bst_utilities._source_grep import application
+
+    report = tmp_path / "broken.jsonl"
+    monkeypatch.setattr(cli, "parse_args", lambda: _report_args(report))
+
+    def search(args):
+        args.broken.add("load", "x.bst", "boom", {})
+        raise BrokenPipeError
+
+    monkeypatch.setattr(application, "_search", search)
+    monkeypatch.setattr(application.os, "dup2", lambda *a: None)
+    assert application.main() == 141
+    assert json.loads(report.read_text())["element"] == "x.bst"

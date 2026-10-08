@@ -104,6 +104,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--report-broken",
+        metavar="FILE",
+        help=(
+            "also write every element, subproject, fetch or option set that failed as "
+            "JSON Lines to FILE: stage, element, error, BuildStream reason and the "
+            "effective options of each option set it failed in"
+        ),
+    )
+
+    parser.add_argument(
         "target",
         nargs="?",
         help="BuildStream element, e.g. default_elements.bst",
