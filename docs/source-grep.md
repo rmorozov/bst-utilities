@@ -20,6 +20,7 @@ no FUSE mount, not no daemon.
 bst-source-grep TARGET PATTERN [options]
 bst-source-grep TARGET --find GLOB [options]
 bst-source-grep --all-elements PATTERN [options]
+bst-source-grep -ar PATTERN [options]        # also every subproject element
 ```
 
 `--all-elements` replaces TARGET with every element file under the toplevel
@@ -43,8 +44,8 @@ junction sets them; `--all-options` varies only the toplevel project's options.
 
 | Option | Behavior |
 | --- | --- |
-| `--all-elements` | Search every element in the project's element path instead of TARGET (see above). |
-| `--include-subprojects` | With `--all-elements`, also search every element of every junctioned subproject (see above). |
+| `-a / --all-elements` | Search every element in the project's element path instead of TARGET (see above). |
+| `-r / --include-subprojects` | With `--all-elements`, also search every element of every junctioned subproject (see above). |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |

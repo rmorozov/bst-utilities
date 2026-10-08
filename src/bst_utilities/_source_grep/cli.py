@@ -84,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "-a",
         "--all-elements",
         action="store_true",
         help=(
@@ -93,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "-r",
         "--include-subprojects",
         action="store_true",
         help=(

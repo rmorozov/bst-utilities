@@ -644,6 +644,8 @@ def test_all_elements_takes_the_only_positional_as_pattern():
     assert args.target is None and args.pattern is None
     args = cli.parse_args(["--all-elements", "--include-subprojects", "needle"])
     assert args.include_subprojects and args.pattern == "needle"
+    args = cli.parse_args(["-ar", "needle"])
+    assert args.all_elements and args.include_subprojects and args.pattern == "needle"
     for argv in (
         ["--all-elements", "app.bst", "needle"],
         ["--find", "*.c"],

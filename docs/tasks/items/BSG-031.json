@@ -14,7 +14,8 @@
       "--all-elements PATTERN and --all-elements --find GLOB need no TARGET; giving TARGET too is an error.",
       "Elements no target depends on are searched; --deps none limits results to the project's own elements; junction elements' subproject trees are not searched as recipes.",
       "It works with --all-options and --fetch-sources; searches with TARGET are unchanged.",
-      "--all-elements --include-subprojects also searches subproject elements no one depends on, at any depth; a subproject that cannot load is reported, the rest is searched and the exit status is 2; --include-subprojects without --all-elements is an error."
+      "--all-elements --include-subprojects also searches subproject elements no one depends on, at any depth; a subproject that cannot load is reported, the rest is searched and the exit status is 2; --include-subprojects without --all-elements is an error.",
+      "-a and -r are short aliases for --all-elements and --include-subprojects."
     ],
     "depends_on": [
       "BSG-026"
