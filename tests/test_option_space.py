@@ -642,7 +642,13 @@ def test_all_elements_takes_the_only_positional_as_pattern():
     assert args.target is None and args.pattern == "needle"
     args = cli.parse_args(["--all-elements", "--find", "*.c"])
     assert args.target is None and args.pattern is None
-    for argv in (["--all-elements", "app.bst", "needle"], ["--find", "*.c"]):
+    args = cli.parse_args(["--all-elements", "--include-subprojects", "needle"])
+    assert args.include_subprojects and args.pattern == "needle"
+    for argv in (
+        ["--all-elements", "app.bst", "needle"],
+        ["--find", "*.c"],
+        ["--include-subprojects", "app.bst", "needle"],
+    ):
         with pytest.raises(SystemExit):
             cli.parse_args(argv)
 

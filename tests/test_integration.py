@@ -420,9 +420,11 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
     project(
         main / "sub",
         "sub",
-        {"src/lib.txt": "sub needle\n"},
+        {"src/lib.txt": "sub needle\n", "spare/spare.txt": "spare needle\n"},
         {
             "lib.bst": local,
+            # Nothing depends on this one; only --include-subprojects reaches it.
+            "spare.bst": "kind: import\nsources:\n- kind: local\n  path: spare\n",
             "inner.bst": f"kind: junction\nsources:\n- kind: tar\n  url: file://{archive}\n"
             f"  ref: {digest}\n",
         },
@@ -492,6 +494,17 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         "lib.bst:lib.txt",
         "sub.bst:lib.bst:lib.txt",
     ]
+    deep = search("--all-elements", "--include-subprojects", "--find", "*.txt", "--fetch-sources")
+    # unused.bst has no ref, so its subproject cannot load: reported, the rest searched.
+    assert deep.returncode == 2, deep.stderr
+    assert "ERROR: could not load subproject unused.bst" in deep.stderr, deep.stderr
+    assert sorted(deep.stdout.splitlines()) == [
+        "extra/orphan.bst:orphan.txt",
+        "lib.bst:lib.txt",
+        "sub.bst:inner.bst:leaf.bst:leaf.txt",
+        "sub.bst:lib.bst:lib.txt",
+        "sub.bst:spare.bst:spare.txt",
+    ], deep.stderr
     nested = search("sub.bst:inner.bst:leaf.bst", "--find", "*")
     assert nested.stdout.splitlines() == ["sub.bst:inner.bst:leaf.bst:leaf.txt"]
     if os.path.exists("/dev/fuse"):

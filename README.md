@@ -42,7 +42,8 @@ bst-source-grep default_elements.bst --find '*.h' --exclude 'vendor/**' --json -
 bst-source-grep default_elements.bst 'pthread_create' --all-options --json
 ```
 
-`--all-elements` searches every element in the project instead of one target.
+`--all-elements` searches every element in the project instead of one target;
+`--include-subprojects` adds every element of every junctioned subproject.
 `--all-options` searches the union of sources reached under every combination of
 the toplevel project's options, attributing each JSON record to its option sets.
 `--options-template` writes a file listing every option and its values; uncomment

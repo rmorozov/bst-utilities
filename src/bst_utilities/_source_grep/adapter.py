@@ -260,6 +260,11 @@ def project_element_names(project):
     return names
 
 
+def junction_loader(project, junction: str):
+    """The loaded subproject behind `junction` (e.g. "a.bst:b.bst") of `project`."""
+    return project.loader.get_loader(junction, None)
+
+
 def is_junction(element) -> bool:
     return element.get_kind() == "junction"
 

@@ -93,6 +93,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--include-subprojects",
+        action="store_true",
+        help=(
+            "with --all-elements, also search every element of each junctioned "
+            "subproject, at any depth (loads unused junctions)"
+        ),
+    )
+
+    parser.add_argument(
         "target",
         nargs="?",
         help="BuildStream element, e.g. default_elements.bst",
@@ -334,6 +343,9 @@ def parse_args(argv=None):
         args.pattern, args.target = args.target, None
     elif args.target is None:
         parser.error("TARGET is required unless --all-elements is used")
+
+    if args.include_subprojects and not args.all_elements:
+        parser.error("--include-subprojects requires --all-elements")
 
     if args.fetch_sources:
         # Sources inside a junction cannot be fetched without its subproject.

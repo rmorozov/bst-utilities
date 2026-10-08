@@ -9,11 +9,12 @@
     "status": "done",
     "effort": "S",
     "problem": "A search always started from one TARGET and its dependencies, so recipes that no aggregating target depends on were never searched.",
-    "proposal": "Add --all-elements, which loads every element under the toplevel element path (as BuildStream lists them without default targets) instead of TARGET, applies --deps to each, and leaves junction elements out.",
+    "proposal": "Add --all-elements, which loads every element under the toplevel element path (as BuildStream lists them without default targets) instead of TARGET, applies --deps to each, and leaves junction elements out. --include-subprojects additionally lists every element of each junctioned subproject, recursively.",
     "acceptance": [
       "--all-elements PATTERN and --all-elements --find GLOB need no TARGET; giving TARGET too is an error.",
       "Elements no target depends on are searched; --deps none limits results to the project's own elements; junction elements' subproject trees are not searched as recipes.",
-      "It works with --all-options and --fetch-sources; searches with TARGET are unchanged."
+      "It works with --all-options and --fetch-sources; searches with TARGET are unchanged.",
+      "--all-elements --include-subprojects also searches subproject elements no one depends on, at any depth; a subproject that cannot load is reported, the rest is searched and the exit status is 2; --include-subprojects without --all-elements is an error."
     ],
     "depends_on": [
       "BSG-026"
@@ -21,7 +22,8 @@
     "evidence": [
       "Branch claude/source-grep-all-options-eheilh (after PR #11).",
       "test_all_elements_takes_the_only_positional_as_pattern, test_project_element_names_walk_the_element_path and the --all-elements runs in test_junctions_nested_fetch_strip_and_targets pass against BuildStream 2.8.1.",
-      "Review of 9df5155: junction targets are dropped before --fetch-sources, so an unused junction with no ref no longer aborts --all-elements --deps none --fetch-sources (unused.bst in the junction integration fixture)."
+      "Review of 9df5155: junction targets are dropped before --fetch-sources, so an unused junction with no ref no longer aborts --all-elements --deps none --fetch-sources (unused.bst in the junction integration fixture).",
+      "--include-subprojects run in test_junctions_nested_fetch_strip_and_targets finds sub.bst:spare.bst and reports unused.bst (no ref) with exit 2, against BuildStream 2.8.1."
     ]
   }
 }

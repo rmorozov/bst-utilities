@@ -32,9 +32,19 @@ and are dropped before `--fetch-sources` fetches anything: their sources are a
 whole subproject, whose used elements are reached as dependencies. It combines with `--all-options`, `--fetch-sources` and the other
 options.
 
+`--include-subprojects` (only with `--all-elements`) also adds every element file of
+each junctioned subproject, at any depth, named `junction.bst:element.bst`, so
+recipes no one depends on inside a subproject are searched too. Every junction
+in the element path is loaded for this, including unused ones; fetching a missing
+one needs `--fetch-subprojects` (or `--fetch-sources`). A subproject that cannot
+load is reported on stderr, the rest is still searched, and the exit status is 2.
+Subproject elements are loaded with the subproject's own option values as the
+junction sets them; `--all-options` varies only the toplevel project's options.
+
 | Option | Behavior |
 | --- | --- |
 | `--all-elements` | Search every element in the project's element path instead of TARGET (see above). |
+| `--include-subprojects` | With `--all-elements`, also search every element of every junctioned subproject (see above). |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
 | `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |
