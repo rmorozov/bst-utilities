@@ -9,9 +9,9 @@
     "status": "done",
     "effort": "S",
     "problem": "On a large project, -ar --fetch-sources grew memory with every link and subproject and ran slowly: listing targets loaded a full element graph (elements, sources and source keys) once per subproject batch and once per link, and --fetch-sources loaded the selection again before the search load.",
-    "proposal": "List targets with BuildStream's Loader only (kind and full name, links resolved) without instantiating elements, bisect failing batches, and fetch from the same loaded elements that are searched.",
+    "proposal": "List targets with BuildStream's Loader only (kind and full name, links resolved) without instantiating elements, fetch from the same loaded elements that are searched, and bisect failing batches at both steps.",
     "acceptance": [
-      "Target discovery for --all-elements/--include-subprojects instantiates no elements; a failing batch is bisected to the broken recipes.",
+      "Target discovery for --all-elements/--include-subprojects instantiates no elements; a batch failing while recipes are read or while elements are instantiated is bisected to the broken recipes, which are reported (exit status 2) while the rest is searched.",
       "--fetch-sources loads the selection once per option set and searches those elements.",
       "Results, diagnostics and exit statuses of the existing --all-elements and --fetch-sources tests are unchanged."
     ],
@@ -21,7 +21,8 @@
     "evidence": [
       "Branch claude/source-grep-all-options-eheilh (after PR #12).",
       "Synthetic project with 4 x 1000 elements (local sources) and 200 links, -ar --find --fetch-sources, BuildStream 2.8.1: 248 s / 700 MB max RSS before, 40 s / 152 MB after (cold cache); 27 s warm.",
-      "test_element_targets_read_recipes_without_instantiating_elements and the junction integration test pass."
+      "test_element_targets_read_recipes_without_instantiating_elements and the junction integration test pass.",
+      "Review of 23802a4: other.bst:plugin.bst (kind: does-not-exist) passes recipe reading and fails at instantiation; -ar with and without --fetch-sources reports it and still emits the healthy matches (junction integration test), and test_load_isolated_bisects_to_targets_that_fail_to_instantiate covers the bisection."
     ]
   }
 }

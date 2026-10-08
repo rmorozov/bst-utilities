@@ -304,23 +304,28 @@ def call_load_selection(stream, targets, selection):
     )
 
 
-def load_and_fetch(stream, targets, selection):
-    """
-    Load the selection and fetch its sources into the local source cache
-    (explicitly requested), returning the loaded elements.
-
-    Does what Stream.fetch() does, but keeps its elements: loading the graph
-    again for the search would instantiate every element and source twice.
-    """
-    elements = stream.load_selection(
-        tuple(targets),
-        selection=selection,
-        connect_artifact_cache=False,
-        connect_source_cache=True,
+def load_for_fetch(stream, targets, selection):
+    """Load the selection as Stream.fetch() does, with the source cache connected."""
+    return list(
+        stream.load_selection(
+            tuple(targets),
+            selection=selection,
+            connect_artifact_cache=False,
+            connect_source_cache=True,
+        )
     )
+
+
+def fetch_loaded(stream, elements) -> None:
+    """
+    Fetch the sources of loaded `elements` into the local source cache
+    (explicitly requested), as Stream.fetch() does after its own load.
+
+    Fetching the elements that are then searched avoids instantiating every
+    element and source a second time.
+    """
     stream.query_cache(elements, only_sources=True)
     stream._fetch(elements, announce_session=True)
-    return list(elements)
 
 
 def release_load_state() -> None:

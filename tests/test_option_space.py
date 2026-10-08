@@ -690,3 +690,27 @@ def test_element_targets_read_recipes_without_instantiating_elements(monkeypatch
     assert batches[0] == names and ["bad.bst"] in batches and len(batches) < 2 * len(names)
     assert args.load_errors == 1
     assert "ERROR: could not load bad.bst: missing dependency" in capsys.readouterr().err
+
+
+def test_load_isolated_bisects_to_targets_that_fail_to_instantiate(monkeypatch, capsys):
+    from bst_utilities._source_grep import application
+
+    loads = []
+
+    def load(names):
+        loads.append(list(names))
+        if "bad.bst" in names:
+            raise RuntimeError("No element plugin registered")
+        return [f"element {name}" for name in names]
+
+    monkeypatch.setattr(adapter, "reset_loader_caches", lambda project: None)
+    monkeypatch.setattr(adapter, "release_load_state", lambda: None)
+    args = SimpleNamespace(load_errors=0)
+    names = [f"e{i}.bst" for i in range(7)] + ["bad.bst"]
+
+    elements = application._load_isolated(args, SimpleNamespace(), names, load)
+    assert elements == [f"element e{i}.bst" for i in range(7)]
+    # The full set, halves down to the broken target, then the rest as one graph.
+    assert loads[-1] == names[:-1] and len(loads) == 8
+    assert args.load_errors == 1
+    assert "ERROR: could not load bad.bst: No element plugin registered" in capsys.readouterr().err

@@ -42,11 +42,67 @@ def _load_selection(ctx, Project, Stream, args, selection, streams, cli_options=
     project = adapter.create_project(Project, ctx, args, stream.fetch_subprojects, cli_options)
     stream.set_project(project)
     targets = _targets(args, project)
-    if args.all_elements:
-        targets = _element_targets(args, project, targets)
     if args.fetch_sources:
-        return stream, project, adapter.load_and_fetch(stream, targets, selection)
-    return stream, project, adapter.call_load_selection(stream, targets, selection)
+
+        def load(names):
+            return adapter.load_for_fetch(stream, names, selection)
+    else:
+
+        def load(names):
+            return adapter.call_load_selection(stream, names, selection)
+
+    if args.all_elements:
+        elements = _load_isolated(args, project, _element_targets(args, project, targets), load)
+    else:
+        elements = load(targets)
+    if args.fetch_sources:
+        adapter.fetch_loaded(stream, elements)
+    return stream, project, elements
+
+
+def _load_isolated(args, project, targets, load):
+    """
+    Load --all-elements targets, skipping the ones that cannot be loaded.
+
+    Listing reads recipes only; plugin and configuration errors appear when
+    elements are instantiated. If the whole selection fails, halves are
+    loaded until each failing target is found and reported, then the rest is
+    loaded once more as one graph.
+    """
+    try:
+        return load(targets)
+    except Exception as exc:
+        _drop_partial_load(project)
+        loadable = _loadable_targets(args, project, targets, load, exc)
+    if not loadable:
+        raise RuntimeError("none of the listed elements could be loaded")
+    return load(loadable)
+
+
+def _loadable_targets(args, project, names, load, error):
+    """The targets among `names`, which failed together with `error`, that load."""
+    if len(names) == 1:
+        args.load_errors += 1
+        print(f"ERROR: could not load {names[0]}: {error}", file=sys.stderr)
+        return []
+    loadable = []
+    middle = len(names) // 2
+    for half in (names[:middle], names[middle:]):
+        try:
+            load(half)
+        except Exception as exc:
+            _drop_partial_load(project)
+            loadable += _loadable_targets(args, project, half, load, exc)
+        else:
+            adapter.release_load_state()
+            loadable += half
+    return loadable
+
+
+def _drop_partial_load(project):
+    """Forget what a failed load left in the loaders and the element map."""
+    adapter.reset_loader_caches(project)
+    adapter.release_load_state()
 
 
 def _element_targets(args, project, names):
