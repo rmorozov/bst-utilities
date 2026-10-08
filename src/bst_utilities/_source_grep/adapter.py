@@ -265,6 +265,23 @@ def junction_loader(project, junction: str):
     return project.loader.get_loader(junction, None)
 
 
+def reset_loader_caches(project) -> None:
+    """
+    Drop what a failed load left in the project's loaders.
+
+    A successful load clears the loaders' element caches. A failed one keeps
+    elements marked fully loaded whose dependencies never loaded, and junction
+    searches still marked in progress; a later load would trust both.
+    """
+    pending = [project.loader]
+    while pending:
+        loader = pending.pop()
+        loader._elements = {}
+        loader._meta_elements = {}
+        loader._loader_search_provenances = {}
+        pending += [child for child in loader._loaders.values() if child is not None]
+
+
 def is_junction(element) -> bool:
     return element.get_kind() == "junction"
 

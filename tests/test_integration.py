@@ -430,6 +430,16 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         },
     )
     project(
+        main / "other",
+        "other",
+        {"src/good.txt": "other needle\n"},
+        {
+            "good.bst": local,
+            # A broken orphan: its dependency does not exist.
+            "bad.bst": f"{local}depends:\n- missing.bst\n",
+        },
+    )
+    project(
         main,
         "main",
         {"src/lib.txt": "main needle\n", "orphan/orphan.txt": "orphan needle\n"},
@@ -439,7 +449,10 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
             "unused.bst": "kind: junction\nsources:\n- kind: tar\n  url: file:///nonexistent.tar\n",
             # No target depends on this one; only --all-elements reaches it.
             "extra/orphan.bst": "kind: import\nsources:\n- kind: local\n  path: orphan\n",
+            # A link to a junction is a junction target too.
+            "unused-alias.bst": "kind: link\nconfig:\n  target: unused.bst\n",
             "sub.bst": "kind: junction\nsources:\n- kind: local\n  path: sub\n",
+            "other.bst": "kind: junction\nsources:\n- kind: local\n  path: other\n",
             "alias.bst": "kind: link\nconfig:\n  target: sub.bst:lib.bst\n",
             "app.bst": "kind: stack\ndepends:\n- lib.bst\n- alias.bst\n- sub.bst:inner.bst:leaf.bst\n",
         },
@@ -486,6 +499,9 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
         "sub.bst:inner.bst:leaf.bst:leaf.txt",
         "sub.bst:lib.bst:lib.txt",
     ], every.stderr
+    offline = search("--all-elements", "--find", "*.txt")
+    assert offline.returncode == 0, offline.stderr
+    assert offline.stdout == every.stdout
     own = search("--all-elements", "--find", "*.txt", "--deps", "none", "--fetch-sources")
     assert own.returncode == 0, own.stderr
     # alias.bst is a link, so as a target it stands for sub.bst:lib.bst.
@@ -498,9 +514,12 @@ def test_junctions_nested_fetch_strip_and_targets(tmp_path):
     # unused.bst has no ref, so its subproject cannot load: reported, the rest searched.
     assert deep.returncode == 2, deep.stderr
     assert "ERROR: could not load subproject unused.bst" in deep.stderr, deep.stderr
+    # The broken orphan is reported; its healthy sibling is still searched.
+    assert "ERROR: could not load other.bst:bad.bst" in deep.stderr, deep.stderr
     assert sorted(deep.stdout.splitlines()) == [
         "extra/orphan.bst:orphan.txt",
         "lib.bst:lib.txt",
+        "other.bst:good.bst:good.txt",
         "sub.bst:inner.bst:leaf.bst:leaf.txt",
         "sub.bst:lib.bst:lib.txt",
         "sub.bst:spare.bst:spare.txt",
