@@ -92,7 +92,7 @@ jobs:
             --allow-partial --json-out "$WORK/bench.json" | tee "$WORK/bench.md"
           cat "$WORK/bench.md" >> "$GITHUB_STEP_SUMMARY"
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-fdsdk
           path: |
