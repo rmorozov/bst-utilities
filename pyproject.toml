@@ -15,7 +15,7 @@ dependencies = []
 
 [project.optional-dependencies]
 buildstream = ["BuildStream>=2.8,<3"]
-dev = ["pytest>=8,<10", "ruff>=0.11,<0.17"]
+dev = ["pytest>=8,<10", "ruff>=0.11,<0.18"]
 
 [project.scripts]
 bst-source-grep = "bst_utilities.source_grep:main"
