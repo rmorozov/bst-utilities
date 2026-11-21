@@ -402,11 +402,14 @@ def test_benchmark_harness_smoke(tmp_path):
     assert fresh["results"] == 100 and fresh["path cache misses"] == 1
     assert by_name["find-warm-index"]["runs"][0]["path cache hits"] == 1
     if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
-        trees = by_name["content-unique-trees"]["runs"][0]
-        assert 1 <= trees["peak mounts"] <= trees["search jobs"] and trees["rg processes"] == 5
-        serial = by_name["content-unique-trees-serial"]["runs"][0]
-        assert serial["peak mounts"] == 1 and serial["search jobs"] == 1
-        assert by_name["content-duplicate-trees"]["runs"][0]["fuse processes"] == 1
+        fuse = by_name["content-unique-trees-fuse"]["runs"][0]
+        assert 1 <= fuse["peak mounts"] <= fuse["search jobs"] and fuse["rg processes"] == 5
+    # Content search reads CAS blobs: no mounts, one rg for all five trees.
+    for name in ("content-unique-trees", "content-unique-trees-serial"):
+        trees = by_name[name]["runs"][0]
+        assert trees["peak mounts"] == 0 and trees["fuse processes"] == 0
+        assert trees["rg processes"] == 1 and trees["searched blobs"] == 15
+    assert by_name["content-duplicate-trees"]["runs"][0]["searched blobs"] == 3
     assert "| find-warm-index |" in result.stdout
 
 
