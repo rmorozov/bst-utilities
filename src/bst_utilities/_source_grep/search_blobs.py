@@ -73,7 +73,11 @@ def blob_hash(rg_path):
 
 
 class BlobHits:
-    """Matches per searched blob; match lines live in a spool file, not memory."""
+    """
+    Which searched blobs matched. Match records are streamed into a spool
+    file one line each, and replayed from it line by line, so neither a blob
+    with many matches nor a blob reused at many paths is held in memory.
+    """
 
     def __init__(self, files_mode):
         self.files_mode = files_mode
@@ -90,16 +94,17 @@ class BlobHits:
             self.hits[blob_hash(path.removeprefix("./"))] = True
 
     def record_matches(self, lines):
+        spool = self.spool
+        spool.seek(0, os.SEEK_END)
+        position = spool.tell()
         current = None
-        matches = []
+        start = position
 
         def finish():
-            if current is not None and matches:
-                data = json.dumps(matches).encode("utf-8")
-                self.spool.seek(0, os.SEEK_END)
-                self.hits[current] = (self.spool.tell(), len(data))
-                self.spool.write(data)
+            if current is not None and position > start:
+                self.hits[current] = (start, position)
 
+        # rg --json writes each file's records contiguously: begin, matches, end.
         for line in lines:
             try:
                 event = json.loads(line)
@@ -107,22 +112,33 @@ class BlobHits:
                 if kind == "begin":
                     finish()
                     current = blob_hash(ripgrep.rg_json_text(event["data"]["path"]))
-                    matches = []
+                    start = position
                 elif kind == "match":
                     data = event["data"]
                     text = ripgrep.rg_json_text(data["lines"]).removesuffix("\n")
-                    matches.append([data.get("line_number"), text.removesuffix("\r")])
+                    record = [data.get("line_number"), text.removesuffix("\r")]
+                    encoded = (json.dumps(record) + "\n").encode("utf-8")
+                    spool.write(encoded)
+                    position += len(encoded)
             except (ValueError, KeyError, TypeError) as exc:
                 raise processes.SearchError(f"invalid rg JSON: {exc}") from exc
         finish()
 
-    def matches(self, h):
-        hit = self.hits.get(h)
-        if hit is None or hit is True:
-            return hit
-        offset, length = hit
-        self.spool.seek(offset)
-        return json.loads(self.spool.read(length).decode("utf-8"))
+    def matched(self, h):
+        return h in self.hits
+
+    def iter_matches(self, h):
+        """(line number, text) records of blob h, read back one at a time."""
+        start, end = self.hits[h]
+        spool = self.spool
+        position = start
+        while position < end:
+            # Other readers may move the file position between records.
+            spool.seek(position)
+            line = spool.readline()
+            position += len(line)
+            line_number, text = json.loads(line.decode("utf-8"))
+            yield line_number, text
 
 
 def tree_entries(tree, cas_dir, matcher, stats):
@@ -150,6 +166,7 @@ class GroupSearch:
     def __init__(self, cmd, farm, files_mode):
         self.farm = farm
         self.files_mode = files_mode
+        self.closed = False
         self.out = tempfile.TemporaryFile(mode="w+b")
         self.errors = tempfile.TemporaryFile(mode="w+b")
         self.proc = None
@@ -177,11 +194,17 @@ class GroupSearch:
             self.close()
 
     def close(self):
-        if self.proc is not None and self.proc.poll() is None:
-            processes.stop_process(self.proc)
-        self.out.close()
-        self.errors.close()
-        shutil.rmtree(self.farm, ignore_errors=True)
+        """Terminate and reap rg, then remove its spools and farm; idempotent."""
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            if self.proc is not None and self.proc.poll() is None:
+                processes.stop_process(self.proc)
+        finally:
+            self.out.close()
+            self.errors.close()
+            shutil.rmtree(self.farm, ignore_errors=True)
 
 
 def search_blobs(trees, args, stats, cas_dir, emitter):
@@ -195,18 +218,25 @@ def search_blobs(trees, args, stats, cas_dir, emitter):
 
     def emit_tree(tree, entries, hits):
         for path, h in entries:
-            found = hits.matches(h)
-            if not found:
+            if not hits.matched(h):
                 continue
-            for element_info in tree["elements"]:
-                origin = origins.get_origin_for_element_path(
-                    element_info, path, tree, args, source_info_cache
+            # Same order as the FUSE backend: each match, then each element.
+            targets = [
+                (
+                    element_info,
+                    origins.get_origin_for_element_path(
+                        element_info, path, tree, args, source_info_cache
+                    ),
                 )
-                if files_mode:
+                for element_info in tree["elements"]
+            ]
+            if files_mode:
+                for element_info, origin in targets:
                     emitter.emit_file(element_info, path, origin)
-                else:
-                    for line_number, text in found:
-                        emitter.emit_match(element_info, path, line_number, text, origin)
+                continue
+            for line_number, text in hits.iter_matches(h):
+                for element_info, origin in targets:
+                    emitter.emit_match(element_info, path, line_number, text, origin)
         tree["directory"] = None
         tree["gitreview"] = None
 
@@ -253,6 +283,9 @@ def search_blobs(trees, args, stats, cas_dir, emitter):
     hits = BlobHits(files_mode)
     root = tempfile.mkdtemp(prefix="bst-source-grep-blobs-", dir=farm_base())
     previous = None
+    # Every GroupSearch started and not yet closed, so that an interrupt or a
+    # closed output while one group is emitted also stops the next group's rg.
+    started = []
     try:
         while position < len(tree_list) or previous is not None:
             current = None
@@ -263,6 +296,7 @@ def search_blobs(trees, args, stats, cas_dir, emitter):
                     stats["rg_processes"] += 1
                     stats["searched_blobs"] += len(new)
                     running = GroupSearch(rg_cmd, make_farm(root, objects_dir, new), files_mode)
+                    started.append(running)
                 current = (group, running)
             # The previous group's rg ran while this one was gathered.
             if previous is not None:
@@ -270,9 +304,11 @@ def search_blobs(trees, args, stats, cas_dir, emitter):
                 complete(*pending, hits)
             previous = current
     finally:
-        if previous is not None and previous[1] is not None:
-            previous[1].close()
-        hits.close()
+        try:
+            for group_search in started:
+                group_search.close()
+        finally:
+            hits.close()
         shutil.rmtree(root, ignore_errors=True)
         stats["search_seconds"] = time.monotonic() - search_start
 

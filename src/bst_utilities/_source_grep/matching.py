@@ -189,14 +189,26 @@ UNSUPPORTED_CONTENT_GLOB = re.compile(r"[{}\\]|^\.?/|/$")
 def blob_search_supported(args):
     """
     Whether every content glob is in the subset this module evaluates exactly
-    like rg: `*`, `?`, `**`, character classes. Brace alternation, escapes and
+    like rg: `*`, `?`, `**` as a whole path component, character classes. Brace alternation, escapes and
     negated include globs (`--glob '!x'`), leading `/` or `./` and
     trailing `/` need rg's own matcher (FUSE).
     """
     if any(g.startswith("!") for g in args.glob):
         return False
     patterns = list(args.glob) + [g[1:] if g.startswith("!") else g for g in args.exclude]
-    return not any(UNSUPPORTED_CONTENT_GLOB.search(g) or g.startswith("!") for g in patterns)
+    return not any(
+        UNSUPPORTED_CONTENT_GLOB.search(g) or g.startswith("!") or _partial_double_star(g)
+        for g in patterns
+    )
+
+
+def _partial_double_star(pattern):
+    """
+    `**` inside a component (`a**/*.c`, `x/**y`). rg treats only a whole
+    `**` component as crossing directories; this matcher would let it match
+    `/` too.
+    """
+    return any("**" in part and part != "**" for part in pattern.split("/"))
 
 
 _GLOB_REGEX_CACHE = {}

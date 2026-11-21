@@ -160,6 +160,11 @@ def content_args(globs=(), excludes=()):
         (["/top.c"], [], False),
         (["./top.c"], [], False),
         ([], ["build/"], False),
+        (["a**/*.c"], [], False),
+        ([], ["a**/*.c"], False),
+        (["x/**y"], [], False),
+        ([], ["!**a"], False),
+        (["**", "**/b.c", "a/**/c.c", "**/a/**"], ["a/**"], True),
     ],
 )
 def test_blob_search_supported(globs, excludes, supported):
@@ -178,13 +183,20 @@ def test_content_filter_agrees_with_ripgrep(tmp_path):
         "src/m.c",
         "top.h",
         ".git",
+        "a.c",
+        "ab.c",
+        "a/b.c",
+        "a/b/c.c",
+        "x/y.c",
     ]
     for rel in tree:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("x\n")
     includes = [[], ["*.c"], ["src"], ["d007/**"], ["b/**"], ["**/x/*"], ["a/*"], ["*.[ch]"]]
     includes += [["src/*"], ["[!a]*.h"], ["?.c"], ["*.c", "*.h"], ["a"], ["**/*.h"]]
+    includes += [["**"], ["**/b.c"], ["a/**/c.c"], ["a/**"], ["**/a/**"]]
     excludes = [[], ["a"], ["*.c"], ["d007"], ["src/**"], ["x"], ["**/x"], ["!*.h"]]
+    excludes += [["**/b.c"], ["a/**/c.c"], ["a/**"], ["**/a/**"]]
     for inc in includes:
         for exc in excludes:
             args = content_args(inc, exc)
@@ -199,3 +211,115 @@ def test_content_filter_agrees_with_ripgrep(tmp_path):
             listed = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True).stdout
             expected = sorted(p.removeprefix("./") for p in listed.split())
             assert sorted(p for p in tree if accepted(p)) == expected, (inc, exc)
+
+
+def test_blob_matches_stream_through_the_spool_one_record_at_a_time(monkeypatch):
+    import json
+
+    from bst_utilities._source_grep import search_blobs
+
+    h = "ab" + "0" * 62
+    lines = [json.dumps({"type": "begin", "data": {"path": {"text": f"./ab/{h}"}}})]
+    count = 50000
+    for n in range(count):
+        data = {"path": {"text": f"./ab/{h}"}, "lines": {"text": f"x{n}\n"}, "line_number": n + 1}
+        lines.append(json.dumps({"type": "match", "data": data}))
+    lines.append(json.dumps({"type": "end", "data": {}}))
+    hits = search_blobs.BlobHits(files_mode=False)
+    sizes = []
+    original = json.dumps
+
+    def watched(obj, *args, **kwargs):
+        text = original(obj, *args, **kwargs)
+        sizes.append(len(text))
+        return text
+
+    monkeypatch.setattr(search_blobs.json, "dumps", watched)
+    try:
+        hits.record_matches(iter(lines))
+        # Each record is serialized on its own, never the whole blob's list.
+        assert max(sizes) < 100
+        # Replay at two paths interleaved: each read is one record, from its own offset.
+        first, second = hits.iter_matches(h), hits.iter_matches(h)
+        for n in range(count):
+            assert next(first) == (n + 1, f"x{n}")
+            assert next(second) == (n + 1, f"x{n}")
+        assert next(first, None) is None
+    finally:
+        hits.close()
+
+
+def test_every_started_group_is_stopped_when_emission_fails(tmp_path, monkeypatch):
+    """A closed output while one group is emitted must also stop the next group's rg."""
+    import types
+
+    from bst_utilities._source_grep import search_blobs
+
+    procs = []
+
+    class Proc:
+        def __init__(self, *args, **kwargs):
+            self.returncode = None
+            procs.append(self)
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                self.returncode = 0
+            return self.returncode
+
+    stopped = []
+    monkeypatch.setattr(search_blobs.subprocess, "Popen", Proc)
+
+    def stop(proc):
+        stopped.append(proc)
+        proc.returncode = -15
+
+    monkeypatch.setattr(search_blobs.processes, "stop_process", stop)
+    monkeypatch.setattr(search_blobs, "GROUP_BLOBS", 1)
+    monkeypatch.setattr(search_blobs, "farm_base", lambda: str(tmp_path))
+    blobs = {f"t{i}": [(f"f{i}.c", f"{i:02d}" + "0" * 62)] for i in range(3)}
+    monkeypatch.setattr(
+        search_blobs,
+        "tree_entries",
+        lambda tree, cas_dir, matcher, stats: blobs[tree["digest"]],
+    )
+
+    def finish(self, hits):
+        self.proc.wait()
+        hits.hits[blobs["t0"][0][1]] = True
+        self.close()
+
+    monkeypatch.setattr(search_blobs.GroupSearch, "finish", finish)
+
+    class Emitter:
+        out = types.SimpleNamespace(flush=lambda: None)
+
+        def emit_file(self, *args):
+            raise BrokenPipeError
+
+    trees = {
+        name: {"digest": name, "elements": [{"label": f"{name}.bst", "element": None}]}
+        for name in blobs
+    }
+    args = types.SimpleNamespace(
+        glob=[],
+        exclude=[],
+        files_with_matches=True,
+        ignore_case=False,
+        fixed_string=False,
+        binary_files="skip",
+        pattern="x",
+        jobs=1,
+        origin=False,
+    )
+    stats = {k: 0 for k in ("rg_processes", "searched_blobs", "searched_files", "results")}
+    with pytest.raises(BrokenPipeError):
+        search_blobs.search_blobs(trees, args, stats, str(tmp_path), Emitter())
+    # The first group finished; the second, started while it was emitted, was stopped.
+    assert len(procs) == 2
+    assert stopped == [procs[1]]
+    assert all(proc.returncode is not None for proc in procs)
+    assert list(tmp_path.iterdir()) == []

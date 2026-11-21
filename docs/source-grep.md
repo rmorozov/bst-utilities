@@ -261,8 +261,10 @@ is searched once per run, however many files, trees, junction instances or
 `--all-options` sets contain it, and a match is reported at every path that holds
 it. Consecutive trees are grouped until about 20,000 new blobs gather, and one rg
 searches each group (with `--jobs` threads) while the next group is read. Match
-lines wait in a temporary spool file, not in memory, for the paths that reuse
-them. Empty files are not searched (they cannot match).
+lines are written to a temporary spool file one record at a time and replayed from
+it record by record for every path that holds the blob, so memory does not grow
+with the number of matches in a file; an interrupt or closed output stops and
+reaps every rg still running. Empty files are not searched (they cannot match).
 
 rg skips binary files it finds while walking a directory but searches binary
 files named on its command line, so blobs are given to it as a directory of
@@ -273,8 +275,9 @@ a tree's files in rg's walk order. Output of each group appears once its rg run
 finishes, not line by line.
 
 The filters are evaluated by this tool, which matches rg for `*`, `?`, `**` and
-character classes (tests compare both on the same tree). Globs using brace
-alternation, backslash escapes, a leading `/` or `./`, a trailing `/`, or a negated
+character classes, with `**` only as a whole path component (tests compare both
+on the same tree). Globs using brace alternation, backslash escapes, `**` inside a
+component (`a**/*.c`), a leading `/` or `./`, a trailing `/`, or a negated
 `--glob '!x'` need rg's own matcher: `auto` uses FUSE for them and `--backend cas`
 refuses them. `--backend fuse` restores the previous behavior for any search.
 

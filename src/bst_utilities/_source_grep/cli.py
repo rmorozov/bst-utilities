@@ -254,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "search backend: "
             "auto = CAS-direct, except FUSE+rg for content globs rg alone can "
-            "evaluate (braces, escapes, negated --glob); "
+            "evaluate (braces, escapes, ** inside a component, negated --glob); "
             "fuse = always use buildbox-fuse + ripgrep; "
             "cas = always CAS-direct"
         ),
