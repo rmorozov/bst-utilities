@@ -277,7 +277,9 @@ finishes, not line by line.
 The filters are evaluated by this tool, which matches rg for `*`, `?`, `**` and
 character classes, with `**` only as a whole path component (tests compare both
 on the same tree). Globs using brace alternation, backslash escapes, `**` inside a
-component (`a**/*.c`), a leading `/` or `./`, a trailing `/`, or a negated
+component (`a**/*.c`), a character class other than letters, digits, `_`, `.` and
+ascending ranges of them (optionally negated), including malformed ones such as
+`[abc` that rg rejects, a leading `/` or `./`, a trailing `/`, or a negated
 `--glob '!x'` need rg's own matcher: `auto` uses FUSE for them and `--backend cas`
 refuses them. `--backend fuse` restores the previous behavior for any search.
 

@@ -165,6 +165,16 @@ def content_args(globs=(), excludes=()):
         (["x/**y"], [], False),
         ([], ["!**a"], False),
         (["**", "**/b.c", "a/**/c.c", "**/a/**"], ["a/**"], True),
+        (["[abc"], [], False),
+        ([], ["[abc"], False),
+        (["[z-a].c"], [], False),
+        ([], ["[z-a]"], False),
+        (["[]a]"], [], False),
+        (["[-a]"], [], False),
+        (["[[:alpha:]]"], [], False),
+        (["[a/b]"], [], False),
+        (["[]"], [], False),
+        (["[a-z0-9_.]*.[ch]", "[!x]?", "[^a-c]"], ["[A-Z]*"], True),
     ],
 )
 def test_blob_search_supported(globs, excludes, supported):
@@ -195,6 +205,7 @@ def test_content_filter_agrees_with_ripgrep(tmp_path):
     includes = [[], ["*.c"], ["src"], ["d007/**"], ["b/**"], ["**/x/*"], ["a/*"], ["*.[ch]"]]
     includes += [["src/*"], ["[!a]*.h"], ["?.c"], ["*.c", "*.h"], ["a"], ["**/*.h"]]
     includes += [["**"], ["**/b.c"], ["a/**/c.c"], ["a/**"], ["**/a/**"]]
+    includes += [["[a-c].c"], ["[^a]*.h"], ["a[b-b].c"]]
     excludes = [[], ["a"], ["*.c"], ["d007"], ["src/**"], ["x"], ["**/x"], ["!*.h"]]
     excludes += [["**/b.c"], ["a/**/c.c"], ["a/**"], ["**/a/**"]]
     for inc in includes:

@@ -197,9 +197,45 @@ def blob_search_supported(args):
         return False
     patterns = list(args.glob) + [g[1:] if g.startswith("!") else g for g in args.exclude]
     return not any(
-        UNSUPPORTED_CONTENT_GLOB.search(g) or g.startswith("!") or _partial_double_star(g)
+        UNSUPPORTED_CONTENT_GLOB.search(g)
+        or g.startswith("!")
+        or _partial_double_star(g)
+        or not _plain_classes(g)
         for g in patterns
     )
+
+
+_CLASS_ITEM = re.compile(r"[A-Za-z0-9_.](?:-[A-Za-z0-9_.])?")
+
+
+def _plain_classes(pattern):
+    """
+    Whether every `[...]` is a class this matcher and rg read the same way:
+    an optional `!`/`^`, then letters, digits, `_` and `.`, or ascending
+    ranges of them. rg rejects an unclosed class or a descending range, which
+    this matcher would read literally, and treats `]`, `-`, `/` and POSIX
+    classes in its own way; those go to rg itself (FUSE), which reports them.
+    """
+    i = 0
+    while True:
+        i = pattern.find("[", i)
+        if i < 0:
+            return True
+        end = pattern.find("]", i + 1)
+        if end < 0:
+            return False
+        body = pattern[i + 1 : end]
+        if body[:1] in ("!", "^"):
+            body = body[1:]
+        if not body:
+            return False
+        for item in _CLASS_ITEM.finditer(body):
+            text = item.group()
+            if len(text) == 3 and text[0] > text[2]:
+                return False
+        if "".join(m.group() for m in _CLASS_ITEM.finditer(body)) != body:
+            return False
+        i = end + 1
 
 
 def _partial_double_star(pattern):

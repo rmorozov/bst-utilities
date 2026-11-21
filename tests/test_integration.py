@@ -1078,6 +1078,12 @@ def test_blob_search_matches_fuse_and_searches_shared_blobs_once(review_project)
     assert re.search(r"searched files:\s+10\b", result.stderr), result.stderr
     assert re.search(r"searched blobs:\s+5\b", result.stderr), result.stderr
     assert re.search(r"rg processes:\s+1\b", result.stderr), result.stderr
+    # Malformed classes reach rg itself, which rejects them, as before.
+    for flag, glob in (("--glob", "[abc"), ("--exclude", "[z-a]")):
+        result = p.search("versions.bst", "needle", flag, glob, "--mount-dir", str(mounts))
+        assert result.returncode == 2, result.stderr
+        assert "error parsing glob" in result.stderr, result.stderr
+        assert not result.stdout
     # Brace globs need rg's own matcher: auto picks FUSE.
     result = p.search("versions.bst", "needle", "--glob", "*.{c,txt}", "--stats")
     assert result.returncode == 0, result.stderr
