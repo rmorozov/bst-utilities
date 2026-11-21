@@ -156,4 +156,47 @@ def make_path_filter(args):
     return accepted
 
 
+def make_content_filter(args):
+    """
+    The --glob/--exclude rules rg applies to content search, as a path filter.
+
+    Equal to rg's own evaluation for globs that blob_search_supported()
+    accepts; `.git` entries are excluded like the FUSE backend's `!**/.git/**`.
+    """
+    includes = [make_find_matcher(g) for g in args.glob]
+    excludes = [make_find_matcher(g[1:] if g.startswith("!") else g) for g in args.exclude]
+
+    def accepted(path):
+        parts = path.split("/")
+        if ".git" in parts[:-1]:
+            return False
+        if includes and not any(m(path) for m in includes):
+            return False
+        if excludes:
+            ancestors = ["/".join(parts[:i]) for i in range(1, len(parts))]
+            if any(m(p) for m in excludes for p in [path, *ancestors]):
+                return False
+        return True
+
+    return accepted
+
+
+# Braces and escapes, and anchoring or directory-only slashes, which
+# _normalize_glob_pattern() would strip.
+UNSUPPORTED_CONTENT_GLOB = re.compile(r"[{}\\]|^\.?/|/$")
+
+
+def blob_search_supported(args):
+    """
+    Whether every content glob is in the subset this module evaluates exactly
+    like rg: `*`, `?`, `**`, character classes. Brace alternation, escapes and
+    negated include globs (`--glob '!x'`), leading `/` or `./` and
+    trailing `/` need rg's own matcher (FUSE).
+    """
+    if any(g.startswith("!") for g in args.glob):
+        return False
+    patterns = list(args.glob) + [g[1:] if g.startswith("!") else g for g in args.exclude]
+    return not any(UNSUPPORTED_CONTENT_GLOB.search(g) or g.startswith("!") for g in patterns)
+
+
 _GLOB_REGEX_CACHE = {}

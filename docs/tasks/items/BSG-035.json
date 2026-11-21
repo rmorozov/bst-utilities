@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-035",
+    "tool": "bst-source-grep",
+    "title": "Search content straight from CAS blobs, each distinct blob once",
+    "area": "performance",
+    "priority": "P1",
+    "status": "done",
+    "effort": "M",
+    "problem": "Content search mounts every unique tree with buildbox-fuse and walks it with rg: on a 400k-file cache of 160 trees a no-match scan took 8 s warm, most of it FUSE overhead, mounting and unmounting; a file shared by several trees (versions, --all-options sets, junction instances) is read once per tree; and content search needs /dev/fuse at all.",
+    "proposal": "Read the CAS Directory records, apply --glob/--exclude to logical paths with a matcher proven equal to rg for a glob subset, and run rg over the distinct blobs those paths name through a symlink farm walked with --follow (so binary-file handling matches FUSE); group consecutive trees per rg run, overlap reading the next group with the running rg, spool match lines, and emit per tree. Keep FUSE for globs only rg can evaluate and for --backend fuse.",
+    "acceptance": [
+      "Text, JSON, -l, -n, -i, -F, --binary-files and --origin output equals the FUSE backend's for the same trees, including binary files with matches before and after a NUL and .git entries; glob filtering equals rg's on a shared tree; closed pipes exit 141 and invalid patterns count a search error.",
+      "A blob shared by several files and trees is searched once (searched files/blobs in --stats); brace, escaped, anchored or negated content globs use FUSE under auto and are refused by --backend cas; no-match, -l and globbed scans on the 400k-file fixture are at least twice as fast as FUSE warm."
+    ],
+    "depends_on": [
+      "BSG-021"
+    ],
+    "evidence": [
+      "Branch claude/cache-perf-submodules-jynprq.",
+      "test_blob_search_matches_fuse_and_searches_shared_blobs_once, test_fuse_mounts_bounded_by_jobs_with_ordered_output (CAS output equals FUSE output), test_fuse_slash_globs_statistics_and_closed_pipe[cas], test_content_filter_agrees_with_ripgrep and test_blob_search_supported pass against BuildStream 2.8.1.",
+      "400k-file fixture, median of 3 warm runs: no-match scan 2.8 s vs 8.1 s FUSE, -l 2.9 s vs 8.7 s, -n --glob '*.h' 2.1 s vs 4.3 s; peak tool RSS 117-132 MiB vs 64 MiB."
+    ]
+  }
+}

@@ -11,10 +11,11 @@ Requires Python 3.10+ and BuildStream >=2.8,<3 in the same environment. The tool
 uses private BuildStream APIs. CI exercises 2.8.0 and the latest available 2.x;
 future releases are not guaranteed compatible merely by satisfying the version
 range. On Linux, both modes require `bubblewrap` (`bwrap`) and `buildbox-casd`
-(the daemon is normally bundled with the BuildStream wheel). FUSE additionally
-requires `buildbox-fuse`, `rg`, a usable `/dev/fuse`, and `fusermount3`/`fusermount`.
-BuildStream's CAS daemon still runs in filename mode; “CAS-direct” means
-no FUSE mount, not no daemon.
+(the daemon is normally bundled with the BuildStream wheel). Content search
+requires `rg`. The FUSE backend (`--backend fuse`, or content globs only rg can
+evaluate, see below) additionally requires `buildbox-fuse`, a usable `/dev/fuse`,
+and `fusermount3`/`fusermount`. BuildStream's CAS daemon still runs in CAS-direct
+mode; “CAS-direct” means no FUSE mount, not no daemon.
 
 ```sh
 bst-source-grep TARGET PATTERN [options]
@@ -58,7 +59,7 @@ reported, so a few bad recipes cost a few extra passes, not one per recipe.
 | `-r / --include-subprojects` | With `--all-elements`, also search every element of every junctioned subproject (see above). |
 | `--report-broken FILE` | Also write every failed element, subproject, fetch or option set as JSON Lines to FILE (see below). |
 | `--deps none/build/run/all` | BuildStream selection semantics; default all. Build selection excludes the target. |
-| `--backend auto/cas/fuse` | Auto uses CAS for filename searches, FUSE + rg for content. CAS accepts only `--find`. |
+| `--backend auto/cas/fuse` | Auto searches CAS directly (filenames and content), and uses FUSE + rg only for content globs CAS cannot evaluate exactly (see [content search](#content-search-from-cas-blobs)); CAS refuses those globs; FUSE always mounts. |
 | `-C / --directory DIR`, `-o / --option KEY VALUE` | Select the project directory and project options used when fetching/building; repeat options, last value wins. |
 | `--all-options`, `--max-option-sets N` | Search the union of sources reached under every combination of the toplevel project's options (see below); `-o` pins an option. Refuses more than N sets (default 64). |
 | `--list-options`, `--options-template` | Print the toplevel project's options (type, default, values, how a search uses them) or an `--options-file` template, then exit. No target is needed. |
@@ -70,13 +71,13 @@ reported, so a few bad recipes cost a few extra passes, not one per recipe.
 | `-i`, `-F`, `-n`, `-l` | Ignore case, literal content pattern, show line numbers, filenames with content matches. `-i` also applies to the find pattern. |
 | `--binary-files skip/text` | Default skip; text mode searches binary contents through rg. |
 | `--json` | JSON Lines: file records or match records containing element, recipe, path and optionally origin. |
-| `--origin` | Best-effort source metadata; overlapping sources can be ambiguous. |
+| `--origin` | Best-effort source metadata; overlapping sources can be ambiguous. Files inside a git submodule add its path and URL (see [submodules](#git-submodules)). |
 | `--gitreview auto/always/never` | Supplement Gerrit origins from cached `.gitreview`; auto only when metadata has no usable Gerrit project. |
-| `--gitreview-nearest` | Use nearest ancestor `.gitreview`; otherwise use tree root. Works with both backends. |
+| `--gitreview-nearest` | Use nearest ancestor `.gitreview`; otherwise use the repository root (the tree root, or the file's submodule root). Works with both backends. |
 | `--strip-junctions` / `--unique-recipes` | Remove junction prefixes and deduplicate identical recipe/path records. Can collapse distinct junction instances. |
 | `--fetch-subprojects` | Explicitly allow fetching missing junction sources required to load the project. Default is refuse with a diagnostic. |
-| `-j / --jobs N` | Content-search trees mounted and searched concurrently; default min(4, CPUs). `1` streams each tree's output as rg produces it. |
-| `--stats`, `--traceback` | Diagnostics to stderr. Stats include per-phase load, mount, search and cleanup time, peak mounts, search jobs, and buildbox-fuse/rg process counts. With more than one job, phase times are summed across trees and can exceed the total. |
+| `-j / --jobs N` | rg threads for CAS content search; trees mounted and searched concurrently with FUSE. Default min(4, CPUs). With FUSE, `1` streams each tree's output as rg produces it. |
+| `--stats`, `--traceback` | Diagnostics to stderr. Stats include per-phase load, mount, search and cleanup time, peak mounts, search jobs, buildbox-fuse/rg process counts, files and distinct blobs searched from CAS, and unstaged submodules. With FUSE and more than one job, phase times are summed across trees and can exceed the total. |
 
 Filename globs support `*`, `?`, character classes and `**`. A pattern with no
 slash matches the basename at any depth; slash patterns match the entire
@@ -123,6 +124,7 @@ lists the effective toplevel option values of every option set it occurred in:
 | `read` | The recipe could not be read: YAML, a missing file or dependency, a `(!)` assertion |
 | `load` | The element could not be instantiated: unknown plugin kind, configuration, undefined variable |
 | `subproject` | A junction's subproject could not be loaded (`--include-subprojects`) |
+| `submodule` | A submodule in `.gitmodules` was not staged; `reason` is `submodule-empty` or `submodule-missing` (see [submodules](#git-submodules)) |
 | `fetch` | Its sources could not be fetched (`--fetch-sources`) |
 | `option-set` | The whole option set failed to load or was declared unsupported; `element` is null |
 
@@ -131,7 +133,8 @@ lists the effective toplevel option values of every option set it occurred in:
 `load` and `subproject` records come from `--all-elements` searches, where a
 failing recipe is skipped instead of failing the run; with TARGET such an error
 still fails the whole run. Elements that load but whose sources are not cached
-or have no ref are reported on stderr only.
+or have no ref are reported on stderr only. `submodule` records come from any
+search and do not change the exit status.
 
 ## Searching every option set
 
@@ -248,6 +251,62 @@ sources differ between combinations. With `--strip-junctions`, JSON records are
 only collapsed when their option sets are equal too, so no set loses attribution;
 text output collapses as before.
 
+## Content search from CAS blobs
+
+A cached source tree is a catalogue: CAS Directory records name every file and
+point at a content-addressed blob. By default content search reads that
+catalogue directly, applies `--glob`/`--exclude` to the logical paths, and runs
+rg over the blobs those paths name, without mounting anything. Each distinct blob
+is searched once per run, however many files, trees, junction instances or
+`--all-options` sets contain it, and a match is reported at every path that holds
+it. Consecutive trees are grouped until about 20,000 new blobs gather, and one rg
+searches each group (with `--jobs` threads) while the next group is read. Match
+lines wait in a temporary spool file, not in memory, for the paths that reuse
+them. Empty files are not searched (they cannot match).
+
+rg skips binary files it finds while walking a directory but searches binary
+files named on its command line, so blobs are given to it as a directory of
+symlinks it walks with `--follow` (in `/dev/shm` when writable): binary files,
+`--binary-files` and `-i/-F/-l/-n` behave as with FUSE. Output is grouped per tree
+in tree order, files in CAS order (sorted files, then subdirectories); FUSE emits
+a tree's files in rg's walk order. Output of each group appears once its rg run
+finishes, not line by line.
+
+The filters are evaluated by this tool, which matches rg for `*`, `?`, `**` and
+character classes (tests compare both on the same tree). Globs using brace
+alternation, backslash escapes, a leading `/` or `./`, a trailing `/`, or a negated
+`--glob '!x'` need rg's own matcher: `auto` uses FUSE for them and `--backend cas`
+refuses them. `--backend fuse` restores the previous behavior for any search.
+
+## Git submodules
+
+A source plugin that checks out submodules stages their files into the same
+cached tree as the superproject (buildstream-plugins `git` does by default,
+recursively), so they are searched like any other file. The superproject's
+`.gitmodules` is staged with them. Every search reads the root `.gitmodules` of
+each tree (one Directory record for a tree without one), and the `.gitmodules` of
+every staged submodule, to find two things:
+
+- A submodule whose directory is empty or missing in the cache was not staged:
+  `checkout-submodules: false` or `checkout: false` on that submodule, a plugin
+  without submodule support (bst-plugins-experimental `git_repo` without a
+  `git_module` source for that path), or a submodule listed in `.gitmodules` but
+  never added. Each is reported as `WARNING: ELEMENT: submodule PATH (URL) is
+  declared in .gitmodules but its directory is empty in the cached sources, so its
+  files are not searched`, counted as `unstaged submodules` in `--stats` and
+  recorded with stage `submodule` by `--report-broken`. The exit status is
+  unchanged, since leaving a submodule out is often deliberate. Searching such a
+  submodule would need its git mirror, which this tool does not read.
+- With `--origin`, a file inside a staged submodule gets
+  `"submodule": {"path": ..., "url": ...}` for the innermost one, with the URL as
+  `.gitmodules` writes it (possibly relative). Its `.gitreview` is the submodule's
+  own (at its root, or the nearest one below it with `--gitreview-nearest`), never
+  the superproject's, and the source's `gerrit_project` is not applied to it. The
+  submodule's commit is not in the cached tree and is not reported.
+
+`url` and `ref` of buildstream-plugins `git` sources are read from the plugin's
+mirror, so they are no longer null.
+
 ## Cache and mounts
 
 The path index defaults to `~/.cache/bst-source-grep/path-index`. It stores one
@@ -259,7 +318,7 @@ on a cache hit. Corrupt indexes produce an error; rebuild with
 `--rebuild-path-cache` or bypass with `--no-path-cache`. Old `.paths` files from
 the attached prototype are ignored and can be removed manually.
 
-FUSE mounts default to `~/.cache/bst-source-grep/mounts`. Each run creates its own
+FUSE mounts (only `--backend fuse` and globs that need it) default to `~/.cache/bst-source-grep/mounts`. Each run creates its own
 mount directory, so another search cannot unmount it while it is being read.
 Each unique source tree is mounted, searched with one rg, then unmounted: the
 buildbox-fuse process is reaped and mount/log paths removed. Up to `--jobs` trees
@@ -323,6 +382,23 @@ shows the uncached count. The manual `Benchmark freedesktop-sdk` workflow
 (`.github/workflows/bench-fdsdk.yml`) fetches a pinned freedesktop-sdk on a GitHub
 runner and runs this mode. It runs only when started by hand (Actions tab or
 API, on any branch), because a run takes about 45 minutes.
+
+Content search from CAS blobs (BSG-035), on a synthetic cache of 160 tar-sourced
+trees with 400,000 files (130,000 distinct blobs; trees come in families of four
+sharing 90% of their files, as versions or option sets do; BuildStream 2.8.1,
+4 CPUs), median of three warm runs, then one after dropping the page cache:
+
+| Search | CAS blobs | FUSE |
+| --- | --- | --- |
+| no-match scan `-F` | 2.8 s (cold 4.3 s) | 8.1 s (cold 10.1 s) |
+| `-l` matching every file | 2.9 s (cold 4.6 s) | 8.7 s (cold 9.7 s) |
+| `-n --glob '*.h'` | 2.1 s (cold 3.4 s) | 4.3 s (cold 5.7 s) |
+
+Peak tool RSS rose from 64 MiB to 117-132 MiB (the set of searched blob hashes and
+one group of paths). On the default benchmark fixture 300 unique three-file trees
+took 1.1 s instead of 2.1 s (one rg instead of 300 mounts). Finding filenames
+with a warm index took 1.3 s on the 400k-file cache before and after the
+`.gitmodules` check (BSG-036).
 
 On 300 unique three-file trees (BuildStream 2.8.0, 4 CPUs), scoped mounts with
 backoff polling took the content search from 20.0 s (15.4 s of it mounting) to

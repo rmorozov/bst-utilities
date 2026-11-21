@@ -7,13 +7,14 @@ import sys
 from . import adapter, cas_layout, option_space, origins, paths, source_cache
 
 
-def discover_trees(elements, args, stats, use_fuse, trees=None, option_set=None):
+def discover_trees(elements, args, stats, use_fuse, trees=None, option_set=None, need_digest=False):
     """
     Group `elements` into `trees` (a new dict unless one is passed in).
 
     With `option_set`, the elements came from one --all-options load: an
     element whose name already reached the same tree under another option set
     gains that set in its "option_sets" list instead of a second entry.
+    FUSE and blob searches (`need_digest`) skip trees without a CAS digest.
     """
     if trees is None:
         trees = {}
@@ -56,10 +57,10 @@ def discover_trees(elements, args, stats, use_fuse, trees=None, option_set=None)
         digest_obj = cas_layout.get_cas_directory_digest(directory)
         digest_value = cas_layout.digest_to_fuse_value(digest_obj)
 
-        if digest_value is None:
+        if digest_value is None or (need_digest and not getattr(digest_obj, "hash", None)):
             stats["no_digest_elements"] += 1
 
-            if use_fuse:
+            if use_fuse or need_digest:
                 print(
                     f"WARNING: could not determine CAS digest for: {label}{context}",
                     file=sys.stderr,

@@ -98,6 +98,51 @@ def iter_cas_files(cas_dir: str, digest):
     yield from frame("", read(digest))
 
 
+def read_directory(cas_dir: str, dir_hash: str):
+    from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2
+
+    message = remote_execution_pb2.Directory()
+    with open(os.path.join(cas_dir, "objects", dir_hash[:2], dir_hash[2:]), "rb") as f:
+        message.ParseFromString(f.read())
+    return message
+
+
+def iter_cas_file_digests(cas_dir: str, digest):
+    """
+    Yield (path, blob hash, size) for every regular file of a CAS tree.
+
+    Same order as iter_cas_files() (sorted files, then sorted subdirectories,
+    depth first); symlinks are not files. Memory is bounded by tree depth
+    times directory width.
+    """
+    objects = os.path.join(cas_dir, "objects")
+    from buildstream._protos.build.bazel.remote.execution.v2 import remote_execution_pb2
+
+    Directory = remote_execution_pb2.Directory
+
+    def read(h):
+        message = Directory()
+        with open(f"{objects}/{h[:2]}/{h[2:]}", "rb") as f:
+            message.ParseFromString(f.read())
+        return message
+
+    def listing(prefix, message):
+        files = sorted((n.name, n.digest.hash, n.digest.size_bytes) for n in message.files)
+        dirs = sorted((n.name, n.digest.hash) for n in message.directories)
+        return [(f"{prefix}{name}", h, size) for name, h, size in files], [
+            (f"{prefix}{name}/", h) for name, h in reversed(dirs)
+        ]
+
+    # Explicit stack instead of nested generators: one frame per directory.
+    files, stack = listing("", read(digest.hash))
+    yield from files
+    while stack:
+        prefix, h = stack.pop()
+        files, dirs = listing(prefix, read(h))
+        yield from files
+        stack.extend(dirs)
+
+
 def iter_path_cache_file(cache_file: Path):
     with open(cache_file, "r", encoding="utf-8") as f:
         for line in f:

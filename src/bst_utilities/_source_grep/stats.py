@@ -41,6 +41,9 @@ def print_stats(stats: dict) -> None:
     print(f"  traversal errors:     {stats['traversal_errors']}", file=sys.stderr)
     print(f"  search errors:        {stats['search_errors']}", file=sys.stderr)
 
+    print(f"  unstaged submodules:  {stats['unstaged_submodules']}", file=sys.stderr)
+    print(f"  searched files:       {stats['searched_files']}", file=sys.stderr)
+    print(f"  searched blobs:       {stats['searched_blobs']}", file=sys.stderr)
     print(f"  path cache hits:      {stats['path_cache_hits']}", file=sys.stderr)
     print(f"  path cache misses:    {stats['path_cache_misses']}", file=sys.stderr)
 
@@ -84,6 +87,9 @@ def new_stats():
         "mount_errors": 0,
         "traversal_errors": 0,
         "search_errors": 0,
+        "unstaged_submodules": 0,
+        "searched_files": 0,
+        "searched_blobs": 0,
         "path_cache_hits": 0,
         "path_cache_misses": 0,
         "results": 0,
