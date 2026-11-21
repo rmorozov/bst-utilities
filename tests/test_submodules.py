@@ -174,6 +174,11 @@ def content_args(globs=(), excludes=()):
         (["[[:alpha:]]"], [], False),
         (["[a/b]"], [], False),
         (["[]"], [], False),
+        ([], ["[]a]", "*.c"], False),
+        ([], ["[-a]"], False),
+        ([], ["[[:alpha:]]"], False),
+        ([], ["[a/b]"], False),
+        ([], ["[]"], False),
         (["[a-z0-9_.]*.[ch]", "[!x]?", "[^a-c]"], ["[A-Z]*"], True),
     ],
 )
