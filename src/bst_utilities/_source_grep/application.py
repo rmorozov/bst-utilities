@@ -17,12 +17,15 @@ from . import (
     catalogue,
     cli,
     discovery,
+    matching,
     mounts,
     option_space,
     output,
+    search_blobs,
     search_cas,
     search_fuse,
     source_cache,
+    submodules,
 )
 from . import stats as metrics
 
@@ -477,10 +480,21 @@ def _search(args) -> int:
     start_time = time.monotonic()
 
     use_fuse = True
+    use_blobs = False
     if args.find is not None and args.backend in ("auto", "cas"):
         use_fuse = False
+    elif args.backend == "cas" or (args.backend == "auto" and matching.blob_search_supported(args)):
+        use_fuse = False
+        use_blobs = True
 
     buildbox_fuse = None
+
+    if use_blobs and shutil.which("rg") is None:
+        print(
+            "error: ripgrep (`rg`) is required for content search but was not found",
+            file=sys.stderr,
+        )
+        return 2
 
     if use_fuse:
         if shutil.which("rg") is None:
@@ -613,7 +627,9 @@ def _search(args) -> int:
                     )
                     stats["cache_check_seconds"] += time.monotonic() - phase_start
                     phase_start = time.monotonic()
-                    catalogue.discover_trees(elements, args, stats, use_fuse, trees, option_set)
+                    catalogue.discover_trees(
+                        elements, args, stats, use_fuse, trees, option_set, need_digest=use_blobs
+                    )
                     discover_seconds += time.monotonic() - phase_start
                     loaded_any = True
                     if option_set is not None:
@@ -640,6 +656,14 @@ def _search(args) -> int:
                         cas_dir = None
                     if cas_dir and not os.path.isdir(os.path.join(cas_dir, "objects")):
                         cas_dir = None
+                    if use_blobs and cas_dir is None:
+                        print(
+                            "error: could not find the local CAS objects directory\n"
+                            "hint: use --cas-dir to specify it, or --backend fuse",
+                            file=sys.stderr,
+                        )
+                        exit_code = 2
+                        return exit_code
 
                 if use_fuse:
                     cas_dir = cas_layout.find_cas_dir(ctx, args)
@@ -661,7 +685,7 @@ def _search(args) -> int:
                     or args.load_errors > 0
                     or stats["uncached_elements"] > 0
                     or stats["unresolved_elements"] > 0
-                    or (use_fuse and stats["no_digest_elements"] > 0)
+                    or ((use_fuse or use_blobs) and stats["no_digest_elements"] > 0)
                 ):
                     exit_code = 2
 
@@ -674,11 +698,16 @@ def _search(args) -> int:
                 # Emission helpers
                 # ------------------------------------------------------------
 
+                submodules.check_trees(trees, args, stats, cas_dir)
                 emitter = output.ResultEmitter(args, out, stats)
 
                 # ------------------------------------------------------------
                 # CAS-direct filename search
                 # ------------------------------------------------------------
+
+                if use_blobs:
+                    exit_code = search_blobs.search_blobs(trees, args, stats, cas_dir, emitter)
+                    return _with_load_errors(exit_code, stats, args)
 
                 if not use_fuse:
                     exit_code = search_cas.search_cas(trees, args, stats, cas_dir, emitter)

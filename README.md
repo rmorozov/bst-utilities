@@ -26,9 +26,11 @@ python -m pip install '.[buildstream]'
 On Linux, install `bubblewrap` (`bwrap`) even for filename searches; BuildStream
 also needs `buildbox-casd`, normally bundled with its wheel.
 Filename search traverses CAS directory metadata directly. Content search also
-requires Linux FUSE access (`/dev/fuse`), `buildbox-fuse`, ripgrep (`rg`) and `fusermount3` or
-`fusermount`. A BuildStream wheel may bundle buildbox-fuse; use an explicit path
-if automatic discovery fails.
+reads files straight from CAS and requires ripgrep (`rg`). Only `--backend fuse`,
+or content globs with braces, escapes or negation, mount trees and need Linux
+FUSE access (`/dev/fuse`), `buildbox-fuse` and `fusermount3` or `fusermount`. A
+BuildStream wheel may bundle buildbox-fuse; use an explicit path if automatic
+discovery fails.
 
 ## Search a project
 

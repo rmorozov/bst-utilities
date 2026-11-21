@@ -22,6 +22,8 @@ framework for other tools.
 | `processes.py` | Child-process streaming/spooling, termination escalation, cancellation and ordered worker scheduling |
 | `ripgrep.py` | Construct rg commands and decode file/JSON match records |
 | `search_cas.py` | Run indexed or direct filename searches and preserve partial-result statuses |
+| `search_blobs.py` | Search content from CAS blobs: filter logical paths, search each distinct blob once through a symlink farm, emit per tree |
+| `submodules.py` | Read `.gitmodules` from cached trees, find a path's submodule and report unstaged submodules |
 | `search_fuse.py` | Run serial or ordered pooled mounted searches and retain mounts for origin lookups when needed |
 | `origins.py` | Source metadata attribution and optional cached .gitreview enrichment |
 | `output.py` | Format text/JSON records, buffer output and deduplicate stripped junction records |

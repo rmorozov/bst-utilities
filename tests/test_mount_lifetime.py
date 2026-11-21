@@ -61,12 +61,16 @@ def test_release_tears_down_one_mount(tmp_path, monkeypatch, keep, force, releas
 
 def test_options_may_follow_target_and_pattern(monkeypatch, capsys):
     # Intermixed parsing reaches semantic validation instead of rejecting PATTERN.
-    monkeypatch.setattr(sys, "argv", ["bst-source-grep", "x.bst", "-n", "pat", "--backend", "cas"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bst-source-grep", "x.bst", "-n", "pat", "--backend", "cas", "--glob", "{a,b}"],
+    )
     with pytest.raises(SystemExit) as exc:
         application.main()
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "only supports --find" in err
+    assert "cannot evaluate brace" in err
     assert "unrecognized arguments" not in err
 
 

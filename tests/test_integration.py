@@ -211,9 +211,10 @@ def test_options_unresolved_and_non_utf8_metadata(review_project):
 
 
 @pytest.mark.integration
-def test_fuse_slash_globs_statistics_and_closed_pipe(review_project):
+@pytest.mark.parametrize("backend", ["fuse", "cas"])
+def test_fuse_slash_globs_statistics_and_closed_pipe(review_project, backend):
     p = review_project
-    if not os.path.exists("/dev/fuse"):
+    if backend == "fuse" and not os.path.exists("/dev/fuse"):
         if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
             pytest.fail("FUSE integration is required but /dev/fuse is missing")
         pytest.skip("/dev/fuse is unavailable")
@@ -228,23 +229,35 @@ def test_fuse_slash_globs_statistics_and_closed_pipe(review_project):
             "--json",
             "--mount-dir",
             str(mounts),
+            "--backend",
+            backend,
             *suffix,
         )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["path"] == "bdir/file.txt"
         excluded = p.search(
-            "multi.bst", "^bdir$", "--exclude", "bdir/**", "--mount-dir", str(mounts), *suffix
+            "multi.bst",
+            "^bdir$",
+            "--exclude",
+            "bdir/**",
+            "--mount-dir",
+            str(mounts),
+            "--backend",
+            backend,
+            *suffix,
         )
         assert excluded.returncode == 1, excluded.stderr
-    invalid = p.search("multi.bst", "[", "--stats", "--mount-dir", str(mounts))
+    invalid = p.search(
+        "multi.bst", "[", "--stats", "--mount-dir", str(mounts), "--backend", backend
+    )
     assert invalid.returncode == 2
     assert re.search(r"search errors:\s+1\b", invalid.stderr), invalid.stderr
-    assert not list(mounts.iterdir())
+    assert not mounts.exists() or not list(mounts.iterdir())
     # Large output ensures the producer observes a closed consumer pipe.
     (p.project / "adir" / "many.txt").write_text("match\n" * 30000)
     p.fetch("multi.bst")
     proc = subprocess.Popen(
-        p.base + ["multi.bst", "^match$", "--mount-dir", str(mounts)],
+        p.base + ["multi.bst", "^match$", "--mount-dir", str(mounts), "--backend", backend],
         env=p.env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -253,7 +266,7 @@ def test_fuse_slash_globs_statistics_and_closed_pipe(review_project):
     proc.stdout.close()
     assert proc.wait(timeout=60) == 141
     assert not proc.stderr.read(), "closed pipe should produce no bogus search diagnostics"
-    assert not list(mounts.iterdir())
+    assert not mounts.exists() or not list(mounts.iterdir())
 
 
 @pytest.mark.integration
@@ -288,6 +301,8 @@ def test_fuse_mounts_bounded_by_jobs_with_ordered_output(review_project):
                 str(mounts),
                 "--jobs",
                 str(jobs),
+                "--backend",
+                "fuse",
                 *extra,
             )
             assert result.returncode == 0, result.stderr
@@ -304,6 +319,13 @@ def test_fuse_mounts_bounded_by_jobs_with_ordered_output(review_project):
     # Pooled output is byte-identical to serial output, in the same order.
     assert outputs[3, False] == outputs[1, False]
     assert outputs[3, True] == outputs[1, True]
+    # Searching the blobs directly gives the same records in the same order.
+    for extra in ([], ["--origin"]):
+        result = p.search("trees.bst", "-n", "dir", "--json", "--stats", "--backend", "cas", *extra)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == outputs[1, bool(extra)]
+        assert re.search(r"fuse processes:\s+0\b", result.stderr), result.stderr
+        assert re.search(r"rg processes:\s+1\b", result.stderr), result.stderr
 
 
 @pytest.mark.integration
@@ -333,7 +355,8 @@ def test_single_tree_streams_before_rg_finishes(review_project):
     env = dict(p.env, PATH=f"{fake_bin}{os.pathsep}{p.env['PATH']}")
     start = time.monotonic()
     proc = subprocess.Popen(
-        p.base + ["multi.bst", "line", "--jobs", "4", "--mount-dir", str(mounts)],
+        p.base
+        + ["multi.bst", "line", "--jobs", "4", "--mount-dir", str(mounts), "--backend", "fuse"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -379,11 +402,14 @@ def test_benchmark_harness_smoke(tmp_path):
     assert fresh["results"] == 100 and fresh["path cache misses"] == 1
     assert by_name["find-warm-index"]["runs"][0]["path cache hits"] == 1
     if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
-        trees = by_name["content-unique-trees"]["runs"][0]
-        assert 1 <= trees["peak mounts"] <= trees["search jobs"] and trees["rg processes"] == 5
-        serial = by_name["content-unique-trees-serial"]["runs"][0]
-        assert serial["peak mounts"] == 1 and serial["search jobs"] == 1
-        assert by_name["content-duplicate-trees"]["runs"][0]["fuse processes"] == 1
+        fuse = by_name["content-unique-trees-fuse"]["runs"][0]
+        assert 1 <= fuse["peak mounts"] <= fuse["search jobs"] and fuse["rg processes"] == 5
+    # Content search reads CAS blobs: no mounts, one rg for all five trees.
+    for name in ("content-unique-trees", "content-unique-trees-serial"):
+        trees = by_name[name]["runs"][0]
+        assert trees["peak mounts"] == 0 and trees["fuse processes"] == 0
+        assert trees["rg processes"] == 1 and trees["searched blobs"] == 15
+    assert by_name["content-duplicate-trees"]["runs"][0]["searched blobs"] == 3
     assert "| find-warm-index |" in result.stdout
 
 
@@ -997,3 +1023,120 @@ def test_fetch_sources_keeps_searching_when_one_source_cannot_be_fetched(tmp_pat
     assert "is not a regular file" in result.stderr
     assert not result.stdout
     assert list(destination.iterdir()) == []
+
+
+@pytest.mark.integration
+def test_blob_search_matches_fuse_and_searches_shared_blobs_once(review_project):
+    p = review_project
+    if not os.path.exists("/dev/fuse"):
+        if os.environ.get("BST_UTILITIES_REQUIRE_FUSE") == "1":
+            pytest.fail("FUSE integration is required but /dev/fuse is missing")
+        pytest.skip("/dev/fuse is unavailable")
+    elements = p.project / "elements"
+    for name in ("v1", "v2"):
+        root = p.project / name
+        (root / "src").mkdir(parents=True)
+        (root / "src" / "shared.c").write_text("int needle;\nother\n")
+        (root / "src" / "copy.c").write_text("int needle;\nother\n")
+        (root / "own.txt").write_text(f"{name} needle\n")
+        (root / "empty.txt").write_text("")
+        # A match before and after the first NUL: rg stops at binary content
+        # while walking a tree, and must do the same for blobs.
+        (root / "early.bin").write_bytes(b"needle early\n" + b"x" * 70000 + b"\n\0needle\n")
+        (root / "late.bin").write_bytes(b"needle\n\0needle late\n")
+        (root / ".git").mkdir()
+        (root / ".git" / "config").write_text("needle\n")
+        (elements / f"{name}.bst").write_text(
+            f"kind: import\nsources:\n- kind: local\n  path: {name}\n"
+        )
+    (elements / "versions.bst").write_text("kind: stack\ndepends:\n- v1.bst\n- v2.bst\n")
+    p.fetch("v1.bst")
+    p.fetch("v2.bst")
+    mounts = p.tmp_path / "mounts"
+    cases = [
+        ["needle", "-n", "--json"],
+        ["needle", "-l"],
+        ["needle", "--binary-files", "text", "--json"],
+        ["NEEDLE", "-i", "-F", "--glob", "src/**", "--exclude", "copy.c"],
+        ["needle", "--glob", "*.txt", "--origin", "--json"],
+    ]
+    for case in cases:
+        results = {}
+        for backend in ("fuse", "cas"):
+            result = p.search(
+                "versions.bst", *case, "--backend", backend, "--stats", "--mount-dir", str(mounts)
+            )
+            assert result.returncode == 0, (case, result.stderr)
+            results[backend] = sorted(result.stdout.splitlines())
+            if backend == "cas":
+                assert re.search(r"fuse processes:\s+0\b", result.stderr), result.stderr
+        assert results["cas"] == results["fuse"], case
+    # Both versions share src/shared.c and src/copy.c: one blob, searched once.
+    result = p.search("versions.bst", "int needle", "--stats")
+    assert result.returncode == 0, result.stderr
+    assert len(result.stdout.splitlines()) == 4
+    assert re.search(r"searched files:\s+10\b", result.stderr), result.stderr
+    assert re.search(r"searched blobs:\s+5\b", result.stderr), result.stderr
+    assert re.search(r"rg processes:\s+1\b", result.stderr), result.stderr
+    # Malformed classes reach rg itself, which rejects them, as before.
+    for flag, glob in (("--glob", "[abc"), ("--exclude", "[z-a]")):
+        result = p.search("versions.bst", "needle", flag, glob, "--mount-dir", str(mounts))
+        assert result.returncode == 2, result.stderr
+        assert "error parsing glob" in result.stderr, result.stderr
+        assert not result.stdout
+    # Brace globs need rg's own matcher: auto picks FUSE.
+    result = p.search("versions.bst", "needle", "--glob", "*.{c,txt}", "--stats")
+    assert result.returncode == 0, result.stderr
+    assert re.search(r"fuse processes:\s+2\b", result.stderr), result.stderr
+
+
+@pytest.mark.integration
+def test_submodules_are_attributed_and_unstaged_ones_reported(review_project):
+    p = review_project
+    root = p.project / "super"
+    (root / "lib" / "deep").mkdir(parents=True)
+    (root / "off").mkdir()
+    (root / "main.c").write_text("needle top\n")
+    (root / ".gitreview").write_text("[gerrit]\nhost=g\nproject=team/top\n")
+    (root / ".gitmodules").write_text(
+        '[submodule "lib"]\n\tpath = lib\n\turl = https://example.org/lib.git\n'
+        '[submodule "off"]\n\tpath = off\n\turl = https://example.org/off.git\n'
+        '[submodule "gone"]\n\tpath = gone\n\turl = https://example.org/gone.git\n'
+    )
+    (root / "lib" / "a.c").write_text("needle lib\n")
+    (root / "lib" / ".gitreview").write_text("[gerrit]\nhost=g\nproject=team/lib\n")
+    (root / "lib" / ".gitmodules").write_text(
+        '[submodule "deep"]\n\tpath = deep\n\turl = ../deep\n'
+    )
+    (root / "lib" / "deep" / "b.c").write_text("needle deep\n")
+    (p.project / "elements" / "super.bst").write_text(
+        "kind: import\nsources:\n- kind: local\n  path: super\n"
+    )
+    p.fetch("super.bst")
+    report = p.tmp_path / "broken.jsonl"
+    for args in (["needle", "--json"], ["--find", "*.c", "--json", "--no-path-cache"]):
+        result = p.search("super.bst", *args, "--origin", "--report-broken", str(report))
+        assert result.returncode == 0, result.stderr
+        assert result.stderr.count("WARNING: super.bst: submodule ") == 2, result.stderr
+        assert "submodule off (https://example.org/off.git)" in result.stderr
+        assert "directory is empty" in result.stderr
+        assert "submodule gone (https://example.org/gone.git)" in result.stderr
+        assert "directory is missing" in result.stderr
+        records = {
+            json.loads(line)["path"]: json.loads(line)["origin"]
+            for line in result.stdout.splitlines()
+        }
+        assert "submodule" not in records["main.c"]
+        assert records["main.c"]["gerrit_project_effective"] == "team/top"
+        assert records["lib/a.c"]["submodule"] == {
+            "path": "lib",
+            "url": "https://example.org/lib.git",
+        }
+        assert records["lib/a.c"]["gerrit_project_effective"] == "team/lib"
+        assert records["lib/deep/b.c"]["submodule"]["path"] == "lib/deep"
+        assert records["lib/deep/b.c"]["gerrit_project_effective"] is None
+        reported = [json.loads(line) for line in report.read_text().splitlines()]
+        assert [(r["stage"], r["element"], r["reason"]) for r in reported] == [
+            ("submodule", "super.bst", "submodule-empty"),
+            ("submodule", "super.bst", "submodule-missing"),
+        ]

@@ -211,7 +211,12 @@ def test_real_buildstream_cas_paths_digest_and_gitreview(tmp_path):
 
 @pytest.mark.parametrize(
     "arguments",
-    [[], ["x.bst"], ["x.bst", "pattern", "--find", "*"], ["x.bst", "p", "--backend", "cas"]],
+    [
+        [],
+        ["x.bst"],
+        ["x.bst", "pattern", "--find", "*"],
+        ["x.bst", "p", "--backend", "cas", "--glob", "*.{c,h}"],
+    ],
 )
 def test_invalid_cli(arguments, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["bst-source-grep", *arguments])

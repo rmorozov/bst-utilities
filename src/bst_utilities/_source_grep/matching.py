@@ -156,4 +156,95 @@ def make_path_filter(args):
     return accepted
 
 
+def make_content_filter(args):
+    """
+    The --glob/--exclude rules rg applies to content search, as a path filter.
+
+    Equal to rg's own evaluation for globs that blob_search_supported()
+    accepts; `.git` entries are excluded like the FUSE backend's `!**/.git/**`.
+    """
+    includes = [make_find_matcher(g) for g in args.glob]
+    excludes = [make_find_matcher(g[1:] if g.startswith("!") else g) for g in args.exclude]
+
+    def accepted(path):
+        parts = path.split("/")
+        if ".git" in parts[:-1]:
+            return False
+        if includes and not any(m(path) for m in includes):
+            return False
+        if excludes:
+            ancestors = ["/".join(parts[:i]) for i in range(1, len(parts))]
+            if any(m(p) for m in excludes for p in [path, *ancestors]):
+                return False
+        return True
+
+    return accepted
+
+
+# Braces and escapes, and anchoring or directory-only slashes, which
+# _normalize_glob_pattern() would strip.
+UNSUPPORTED_CONTENT_GLOB = re.compile(r"[{}\\]|^\.?/|/$")
+
+
+def blob_search_supported(args):
+    """
+    Whether every content glob is in the subset this module evaluates exactly
+    like rg: `*`, `?`, `**` as a whole path component, character classes. Brace alternation, escapes and
+    negated include globs (`--glob '!x'`), leading `/` or `./` and
+    trailing `/` need rg's own matcher (FUSE).
+    """
+    if any(g.startswith("!") for g in args.glob):
+        return False
+    patterns = list(args.glob) + [g[1:] if g.startswith("!") else g for g in args.exclude]
+    return not any(
+        UNSUPPORTED_CONTENT_GLOB.search(g)
+        or g.startswith("!")
+        or _partial_double_star(g)
+        or not _plain_classes(g)
+        for g in patterns
+    )
+
+
+_CLASS_ITEM = re.compile(r"[A-Za-z0-9_.](?:-[A-Za-z0-9_.])?")
+
+
+def _plain_classes(pattern):
+    """
+    Whether every `[...]` is a class this matcher and rg read the same way:
+    an optional `!`/`^`, then letters, digits, `_` and `.`, or ascending
+    ranges of them. rg rejects an unclosed class or a descending range, which
+    this matcher would read literally, and treats `]`, `-`, `/` and POSIX
+    classes in its own way; those go to rg itself (FUSE), which reports them.
+    """
+    i = 0
+    while True:
+        i = pattern.find("[", i)
+        if i < 0:
+            return True
+        end = pattern.find("]", i + 1)
+        if end < 0:
+            return False
+        body = pattern[i + 1 : end]
+        if body[:1] in ("!", "^"):
+            body = body[1:]
+        if not body:
+            return False
+        for item in _CLASS_ITEM.finditer(body):
+            text = item.group()
+            if len(text) == 3 and text[0] > text[2]:
+                return False
+        if "".join(m.group() for m in _CLASS_ITEM.finditer(body)) != body:
+            return False
+        i = end + 1
+
+
+def _partial_double_star(pattern):
+    """
+    `**` inside a component (`a**/*.c`, `x/**y`). rg treats only a whole
+    `**` component as crossing directories; this matcher would let it match
+    `/` too.
+    """
+    return any("**" in part and part != "**" for part in pattern.split("/"))
+
+
 _GLOB_REGEX_CACHE = {}

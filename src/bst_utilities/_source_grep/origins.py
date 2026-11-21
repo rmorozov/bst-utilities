@@ -25,6 +25,7 @@ def describe_source_object(src, index):
         (
             "url",
             "_url",
+            "original_url",
             "repository",
             "location",
             "path",
@@ -59,6 +60,7 @@ def describe_source_object(src, index):
         (
             "track",
             "_track",
+            "tracking",
             "track_ref",
         ),
     )
@@ -110,6 +112,15 @@ def describe_source_object(src, index):
         track = adapter.bst_get(raw, "track") or track
         directory = adapter.bst_get(raw, "directory") or directory
         gerrit_project = adapter.bst_get(raw, "gerrit_project") or gerrit_project
+
+    # buildstream-plugins `git` keeps its URL and ref on a GitMirror.
+    try:
+        mirror = getattr(src, "mirror", None)
+    except Exception:
+        mirror = None
+    if mirror is not None and not callable(mirror):
+        url = url or adapter.bst_value(mirror, ("url",))
+        ref = ref or adapter.bst_value(mirror, ("ref",))
 
     if ref is None and track is not None:
         ref = track
@@ -305,12 +316,18 @@ class MountedGitreviewCache:
         self.dir_cache[rel_dir] = info
         return info
 
-    def for_path(self, rel_path: str):
+    def for_path(self, rel_path: str, root: str = ""):
+        """
+        The .gitreview of the repository root `root` (the tree root, or the
+        submodule rel_path belongs to), or with `nearest` of the nearest
+        directory between rel_path and `root`; never above `root`, whose
+        .gitreview belongs to another repository.
+        """
         if self.mode == "never":
             return None
 
         if not self.nearest:
-            return self._read_dir("")
+            return self._read_dir(root)
 
         d = os.path.dirname(rel_path)
 
@@ -336,7 +353,7 @@ class MountedGitreviewCache:
                     self.nearest_cache[v] = exact
                 return exact
 
-            if cur == "":
+            if cur == root:
                 for v in visited:
                     self.nearest_cache[v] = None
                 return None
@@ -391,6 +408,17 @@ def get_origin_for_element_path(
             "id": "ambiguous" if source_infos else "no-source",
         }
 
+    index = tree.get("submodules")
+    module = index.for_path(rel_path) if index is not None else None
+    root = ""
+    if module is not None:
+        root = module["path"]
+        origin["submodule"] = {"path": module["path"], "url": module["url"]}
+        # The source's Gerrit project names the superproject, not this file's.
+        if origin.get("gerrit_project_source") == "source-plugin":
+            origin["gerrit_project_effective"] = None
+            origin["gerrit_project_source"] = None
+
     if args.gitreview_mode != "never":
         needs_gitreview = False
 
@@ -403,7 +431,7 @@ def get_origin_for_element_path(
         if needs_gitreview:
             gitreview_cache = tree.get("gitreview")
             if gitreview_cache is not None:
-                gitreview_info = gitreview_cache.for_path(rel_path)
+                gitreview_info = gitreview_cache.for_path(rel_path, root)
                 if gitreview_info is not None:
                     origin = enrich_origin_with_gitreview(origin, gitreview_info)
 

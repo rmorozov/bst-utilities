@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from . import matching
 from .option_space import DEFAULT_MAX_OPTION_SETS
 
 
@@ -252,9 +253,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help=(
             "search backend: "
-            "auto = CAS-direct for --find, FUSE+rg for content; "
+            "auto = CAS-direct, except FUSE+rg for content globs rg alone can "
+            "evaluate (braces, escapes, ** inside a component, negated --glob); "
             "fuse = always use buildbox-fuse + ripgrep; "
-            "cas = CAS-direct for --find only"
+            "cas = always CAS-direct"
         ),
     )
 
@@ -283,8 +285,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "content-search trees mounted and searched concurrently "
-            "(default: min(4, CPUs); 1 streams each tree's output as it is found)"
+            "rg threads for CAS content search; with FUSE, trees mounted and "
+            "searched concurrently (default: min(4, CPUs); with FUSE, 1 streams "
+            "each tree's output as it is found)"
         ),
     )
     parser.add_argument(
@@ -369,8 +372,11 @@ def parse_args(argv=None):
     if args.find is not None and args.pattern is not None:
         parser.error("PATTERN cannot be used together with --find")
 
-    if args.backend == "cas" and args.find is None:
-        parser.error("--backend=cas currently only supports --find")
+    if args.backend == "cas" and args.find is None and not matching.blob_search_supported(args):
+        parser.error(
+            "--backend=cas cannot evaluate brace, escaped, anchored or negated content "
+            "globs; use --backend fuse or auto"
+        )
 
     if args.max_option_sets < 1:
         parser.error("--max-option-sets must be at least 1")

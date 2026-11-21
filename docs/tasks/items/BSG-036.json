@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-036",
+    "tool": "bst-source-grep",
+    "title": "Attribute submodule files and report submodules missing from the cache",
+    "area": "correctness",
+    "priority": "P2",
+    "status": "done",
+    "effort": "S",
+    "problem": "Submodules staged by a source plugin are searched, but --origin credits their files to the superproject (with null url/ref for buildstream-plugins git) and the superproject's .gitreview Gerrit project; a submodule left unstaged (checkout-submodules: false, git_repo without git_module, a submodule never added) silently looks like no matches.",
+    "proposal": "Read each tree's .gitmodules, and those of staged submodules, from CAS: attribute files to the innermost staged submodule (path and URL), take .gitreview from that submodule's root, read git source url/ref from its mirror, and warn about declared submodules whose directory is empty or missing, with a --report-broken record, without changing the exit status.",
+    "acceptance": [
+      "Files in nested staged submodules carry the innermost submodule's path and URL and its own .gitreview project (none when it has no .gitreview); superproject files are unchanged; buildstream-plugins git sources report url and ref.",
+      "Empty and missing submodule directories are reported on stderr, in --stats and as stage submodule records with reason submodule-empty/submodule-missing, for content and filename searches; the exit status is unchanged; a tree without .gitmodules costs one Directory read and warm-index filename search time is unchanged."
+    ],
+    "depends_on": [
+      "BSG-034"
+    ],
+    "evidence": [
+      "Branch claude/cache-perf-submodules-jynprq.",
+      "test_submodules_are_attributed_and_unstaged_ones_reported and the tests/test_submodules.py unit tests pass against BuildStream 2.8.1; a manual buildstream-plugins 2.8.0 git fixture with a nested submodule, checkout-submodules: false and checkout: false on the nested one reported both gaps and attributed every match.",
+      "400k-file fixture: warm-index find 1.34 s before and after."
+    ]
+  }
+}
