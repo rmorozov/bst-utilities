@@ -417,7 +417,8 @@ medians were: find with a warm index 32 s (24 s of it project load), without one
 (374 s with `--jobs 1`). Load is now 17.5-20 s, of which 1.4 s is project
 load and the rest casd verifying the ~600k file blobs of 468 trees.
 
-See [the task registry](tasks/README.md) for prioritized next steps, including
+See [the performance proposals](source-grep-performance.md) for measured search workloads
+and the next end-to-end comparison. See [the task registry](tasks/README.md) for next steps, including
 benchmarking, module boundaries, bounded mounts and improved diagnostics.
 
 ## Implementation layout

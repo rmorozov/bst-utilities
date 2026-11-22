@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-042",
+    "tool": "bst-source-grep",
+    "title": "Reduce origin lookup cost for trees with many staged submodules",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "S",
+    "problem": "Finding the innermost submodule scans the module list for each path, including superproject paths that match none.",
+    "proposal": "Index staged modules by path and walk parent components from deepest to shallowest. Keep the no-module shortcut.",
+    "acceptance": [
+      "Match current origin and .gitreview selection for nested modules, similarly named siblings, paths outside modules, and empty or missing modules. Preserve unstaged diagnostics.",
+      "Compare no-module, moderate and many-module fixtures; record lookup cost and full --origin --json search time before deciding. Check that the common no-module case does not regress."
+    ],
+    "depends_on": [
+      "BSG-036"
+    ],
+    "evidence": [
+      "20k path lookups across 128 staged modules took 118 ms with a list vs 5 ms with parent-path lookup (lookup only). See https://github.com/rmorozov/bst-utilities/pull/17#pullrequestreview-6013606582 and docs/source-grep-performance.md."
+    ]
+  }
+}

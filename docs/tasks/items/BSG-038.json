@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-038",
+    "tool": "bst-source-grep",
+    "title": "Measure the complete all-options origin-to-project mapping query",
+    "area": "performance",
+    "priority": "P1",
+    "status": "ready",
+    "effort": "M",
+    "problem": "Search-phase experiments omit graph loading per option set, cache checks and output volume. They cannot show which change helps the actual element/project mapping.",
+    "proposal": "Run paired line and filename-only searches on a pinned fetched project with representative options, origin and JSON. Keep correctness captures separate from wall-time measurements.",
+    "acceptance": [
+      "Record target, pattern, option-space dimensions, versions, job count and cache conditions; compare at least three timed runs per mode with the same output sink. Report wall, first record, project load, cache checks, search, peak tool RSS, option sets, files/blobs and result counts.",
+      "Compare exit statuses and sorted distinct nonempty element/Gerrit-project pairs for complete runs, including a submodule when available. Record partial or unavailable runs as such. Publish only aggregate data or public fixtures.",
+      "Use the largest measured end-to-end cost to select the next task; recommend -l for pair extraction only when pair sets agree."
+    ],
+    "depends_on": [
+      "BSG-037"
+    ],
+    "evidence": [
+      "One shared blob at eight paths produced eight filenames or 128,000 matching lines in the search-only fixture. See https://github.com/rmorozov/bst-utilities/pull/17#pullrequestreview-6013606582 and docs/source-grep-performance.md."
+    ]
+  }
+}
