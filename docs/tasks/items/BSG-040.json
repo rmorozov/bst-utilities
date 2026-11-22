@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-040",
+    "tool": "bst-source-grep",
+    "title": "Reduce spool encoding and replay cost for dense content matches",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Every matching line is converted from rg JSON into another JSON record, then parsed again per logical path sharing that blob.",
+    "proposal": "Compare the existing temporary spool with a length-prefixed record (line number and text bytes); preserve the per-blob ranges and independently positioned readers.",
+    "acceptance": [
+      "Compare text and JSON output byte for byte for shared blobs, Unicode, rg base64 events, CRLF, empty matching lines and long lines; exercise interleaved readers and cancellation across groups.",
+      "Repeat dense and sparse benchmarks; record search time, peak RSS and temporary bytes. Keep memory bounded by record size rather than match count and retain the -l fast path."
+    ],
+    "depends_on": [
+      "BSG-037"
+    ],
+    "evidence": [
+      "Dense shared-blob text output took 266 ms with the existing spool and 161 ms with a prototype. See https://github.com/rmorozov/bst-utilities/pull/17#pullrequestreview-6013606582 and docs/source-grep-performance.md."
+    ]
+  }
+}

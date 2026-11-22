@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-037",
+    "tool": "bst-source-grep",
+    "title": "Run CAS benchmarks without FUSE and distinguish unique from shared bytes",
+    "area": "performance",
+    "priority": "P1",
+    "status": "ready",
+    "effort": "S",
+    "problem": "The scenario lists mark auto/CAS content searches as requiring FUSE, so a capable runner can report success without a content sample. The large-file fixture repeats identical content.",
+    "proposal": "Describe rg and FUSE prerequisites separately in both catalogues. Keep a shared-blob large-file case and add distinct contents of comparable logical size.",
+    "acceptance": [
+      "With rg and CAS available but no FUSE, synthetic and external CAS content cases run; explicit FUSE cases report a skip. Missing rg is diagnosed separately. An explicitly requested benchmark with no samples is distinguishable from a successful measurement.",
+      "Fixture tests verify four distinct payload digests in the unique large-file case and one in the shared case. Report logical files and distinct searched blobs so either case can be recognized in benchmark results."
+    ],
+    "depends_on": [
+      "BSG-035"
+    ],
+    "evidence": [
+      "The default fixture nominally contains four 16 MiB files, but CAS searches one blob. See https://github.com/rmorozov/bst-utilities/pull/17#pullrequestreview-6013606582 and docs/source-grep-performance.md."
+    ]
+  }
+}

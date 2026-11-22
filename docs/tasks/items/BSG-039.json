@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-039",
+    "tool": "bst-source-grep",
+    "title": "Skip CAS subtrees excluded by literal include prefixes",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Content filtering constructs logical paths after reading every Directory, even for a literal include prefix that selects one small subtree.",
+    "proposal": "Descend only into the union of provably relevant prefixes; keep the existing file matcher and fall back to full traversal for any include that could match elsewhere.",
+    "acceptance": [
+      "Differential tests compare order, records and exit status for overlapping includes, a basename-only include mixed with a prefix, exclusions, .git and no matches. Specify behavior for unreadable subtrees; do not hide incomplete-cache errors silently.",
+      "Compare Directory reads and elapsed search time for selective and broad queries on the same tree, confirming fewer reads for the selective case and no material broad-scan regression."
+    ],
+    "depends_on": [
+      "BSG-037"
+    ],
+    "evidence": [
+      "100 directories × 80 files, one selected directory: 16.6 ms baseline vs 6.4 ms for a literal-prefix prototype. See https://github.com/rmorozov/bst-utilities/pull/17#pullrequestreview-6013606582 and docs/source-grep-performance.md."
+    ]
+  }
+}

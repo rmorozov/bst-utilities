@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "BSG-041",
+    "tool": "bst-source-grep",
+    "title": "Evaluate a chunked path-index format on disk",
+    "area": "performance",
+    "priority": "P2",
+    "status": "proposed",
+    "effort": "M",
+    "problem": "Decoding one JSON string per cached filename can cost more than direct traversal on a warm memory-backed fixture; on-disk benefit is unknown.",
+    "proposal": "Compare v2 JSONL with chunked NUL-delimited paths and direct CAS traversal. Adopt a versioned format only if repeated on-disk measurements justify migration.",
+    "acceptance": [
+      "Compare fresh and warm tool indexes, no index, broad and absent-name queries on large on-disk trees; distinguish tool-cache state from OS page-cache state. Record wall time, search time, index size and RSS.",
+      "If adopted, preserve path order and round trips for newline and non-ASCII filenames, detect an unterminated record, and verify atomic publication, concurrent writers and isolation from v2 caches."
+    ],
+    "depends_on": [
+      "BSG-013"
+    ],
+    "evidence": [
+      "Warm tmpfs 8k-path index, absent basename: 8.5 ms with JSONL vs 3.5 ms with a NUL reader. See https://github.com/rmorozov/bst-utilities/pull/17#pullrequestreview-6013606582 and docs/source-grep-performance.md."
+    ]
+  }
+}
